@@ -1,0 +1,16 @@
+{
+  "name": "Sosun Fihaara — Marketing Planner",
+  "short_name": "Sosun Marketing Planner",
+  "description": "Marketing operations platform: campaigns, tasks, calendar, and a Google Drive media library.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#ffffff",
+  "theme_color": "#15803d",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}

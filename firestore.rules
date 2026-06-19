@@ -1,0 +1,161 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper to get active user role
+    function getRole() {
+      return request.auth.token.role;
+    }
+
+    // Authenticated users check
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    // Users Collection
+    match /users/{userId} {
+      allow read: if isAuth();
+      allow write: if isAuth() && (request.auth.uid == userId || getRole() == 'admin');
+    }
+
+    // Campaigns Collection
+    match /campaigns/{campaignId} {
+      allow read: if isAuth();
+      // Admin and Internal can write/create; Agency cannot delete/create campaigns
+      allow create, update: if isAuth() && (getRole() == 'admin' || getRole() == 'internal');
+      allow delete: if isAuth() && getRole() == 'admin';
+    }
+
+    // Tasks Collection
+    match /tasks/{taskId} {
+      allow read: if isAuth();
+      // Admin and Internal can create/delete tasks
+      allow create, delete: if isAuth() && (getRole() == 'admin' || getRole() == 'internal');
+      // Agency can update tasks if they are assigned to Agency
+      allow update: if isAuth() && (
+        getRole() == 'admin' || 
+        getRole() == 'internal' || 
+        (getRole() == 'agency' && resource.data.assignedTo == 'Agency')
+      );
+    }
+
+    // Assets Collection (legacy Firebase Storage file manager)
+    match /assets/{assetId} {
+      allow read: if isAuth();
+      allow create: if isAuth();
+      allow delete: if isAuth() && (
+        getRole() == 'admin' ||
+        getRole() == 'internal' ||
+        resource.data.uploadedBy == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.displayName
+      );
+    }
+
+    // Media Assets (Google Drive DAM index).
+    // Writes go exclusively through the backend (Admin SDK bypasses these rules),
+    // so clients are read-only here. This keeps the Drive workspace boundary and
+    // metadata integrity enforced server-side.
+    match /mediaAssets/{assetId} {
+      allow read: if isAuth();
+      allow write: if false;
+
+      // Approval history / comments — backend-managed, client read-only.
+      match /activity/{entryId} {
+        allow read: if isAuth();
+        allow write: if false;
+      }
+    }
+
+    // Application settings (workspace config, etc.). Backend-managed.
+    match /settings/{docId} {
+      allow read: if isAuth();
+      allow write: if false;
+    }
+
+    // Global Activities Collection
+    match /activities/{activityId} {
+      allow read, write: if isAuth();
+    }
+
+    // Brand portfolio (first-class brand records)
+    match /brands/{brandId} {
+      allow read: if isAuth();
+      allow write: if isAuth() && getRole() == 'admin';
+    }
+
+    // Events & sponsorships (trade shows, exhibitions, activations)
+    match /events/{eventId} {
+      allow read: if isAuth();
+      allow create, update: if isAuth() && (getRole() == 'admin' || getRole() == 'internal');
+      allow delete: if isAuth() && getRole() == 'admin';
+
+      // Real-time packing board
+      match /packingItems/{itemId} {
+        allow read: if isAuth();
+        allow write: if isAuth() && (getRole() == 'admin' || getRole() == 'internal');
+      }
+
+      // Logistics legs (shipments, booth, staffing, permits)
+      match /logistics/{legId} {
+        allow read: if isAuth();
+        allow write: if isAuth() && (getRole() == 'admin' || getRole() == 'internal');
+      }
+    }
+
+    // Retail outlets
+    match /outlets/{outletId} {
+      allow read: if isAuth();
+      allow write: if isAuth() && (getRole() == 'admin' || getRole() == 'internal');
+    }
+
+    // Display asset distributions at outlets
+    match /distributions/{distId} {
+      allow read: if isAuth();
+      allow write: if isAuth() && (getRole() == 'admin' || getRole() == 'internal');
+    }
+
+    // Budget ledger — agency partners cannot see spend
+    match /budgetEntries/{entryId} {
+      allow read: if isAuth() && (getRole() == 'admin' || getRole() == 'internal');
+      allow create, update: if isAuth() && (getRole() == 'admin' || getRole() == 'internal');
+      allow delete: if isAuth() && getRole() == 'admin';
+    }
+
+    // Generated monthly brand reports — created by backend (Admin SDK bypasses rules);
+    // admins may delete stale or incorrect reports from the client.
+    match /reports/{reportId} {
+      allow read: if isAuth() && (getRole() == 'admin' || getRole() == 'internal');
+      allow create, update: if false;
+      allow delete: if isAuth() && getRole() == 'admin';
+    }
+
+    // News Sentinel — monitored feeds, admin-managed from the News settings tab.
+    match /newsSources/{sourceId} {
+      allow read: if isAuth() && (getRole() == 'admin' || getRole() == 'internal');
+      allow write: if isAuth() && getRole() == 'admin';
+    }
+
+    // News Sentinel — brand watch-terms, admin-managed.
+    match /newsKeywords/{keywordId} {
+      allow read: if isAuth() && (getRole() == 'admin' || getRole() == 'internal');
+      allow write: if isAuth() && getRole() == 'admin';
+    }
+
+    // Detected mentions — created exclusively by the backend scan worker
+    // (Admin SDK bypasses rules). Internal/admin may update status (review,
+    // promote, dismiss); no client create/delete.
+    match /newsMentions/{mentionId} {
+      allow read:   if isAuth() && (getRole() == 'admin' || getRole() == 'internal');
+      allow update: if isAuth() && (getRole() == 'admin' || getRole() == 'internal');
+      allow create, delete: if false;
+    }
+
+    // Push notification subscriptions — each user manages their own.
+    // Backend (Admin SDK) reads all subscriptions for broadcast delivery.
+    match /pushSubscriptions/{subId} {
+      allow read: if isAuth() && resource.data.uid == request.auth.uid;
+      allow create: if isAuth() && request.resource.data.uid == request.auth.uid;
+      allow update: if isAuth() && resource.data.uid == request.auth.uid;
+      allow delete: if isAuth() && resource.data.uid == request.auth.uid;
+    }
+  }
+}

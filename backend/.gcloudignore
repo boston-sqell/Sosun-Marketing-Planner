@@ -1,0 +1,9 @@
+# Don't upload these to Cloud Build / Cloud Run source deploys.
+# node_modules is reinstalled by the Node buildpack; .env holds secrets that are
+# already configured on the Cloud Run service (a source deploy preserves them).
+node_modules/
+.env
+.env.example
+*.log
+npm-debug.log*
+.DS_Store
