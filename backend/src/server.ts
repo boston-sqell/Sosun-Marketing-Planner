@@ -11,6 +11,7 @@ import reportsRouter from './routes/reports';
 import newsRouter from './routes/news';
 import pushRouter from './routes/push';
 import tasksRouter from './routes/tasks';
+import campaignsRouter from './routes/campaigns';
 
 dotenv.config();
 
@@ -83,11 +84,16 @@ app.use(express.json());
 
 // ── Rate limiting ───────────────────────────────────────────────────────────
 // Global: 100 requests per 15 minutes per IP
+const MEDIA_STREAM_PATH = /^\/api\/drive\/files\/[^/]+\/(content|thumbnail)(\/|$)|^\/api\/drive\/files\/[^/]+\/revisions\/[^/]+\/content$/;
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
   standardHeaders: true,
   legacyHeaders: false,
+  // Media streaming (range requests, thumbnails) can issue many GETs for a single
+  // view; counting them would lock out a normal user. They're already guarded by
+  // the media-token check and the workspace boundary, so exempt them here.
+  skip: (req) => req.method === 'GET' && MEDIA_STREAM_PATH.test(req.path),
   message: { success: false, error: 'Too many requests, please try again later.' },
 });
 app.use(globalLimiter);
@@ -110,6 +116,7 @@ app.use('/api/reports', reportsRouter);
 app.use('/api/news', newsRouter);
 app.use('/api/push', pushRouter);
 app.use('/api/tasks', tasksRouter);
+app.use('/api/campaigns', campaignsRouter);
 
 // Basic health check route
 app.get('/health', (req, res) => {
@@ -119,10 +126,20 @@ app.get('/health', (req, res) => {
 // Global Error Handler Middleware
 app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
   console.error('Unhandled backend error:', err);
-  res.status(500).json({
-    success: false,
-    error: err.message || 'Internal server error'
-  });
+  // Honor an explicit status set by deeper handlers (e.g. assertWithinRoot → 403,
+  // verifyToken → 401). Anything without a 4xx/5xx status is treated as a 500.
+  const status = Number(err?.status);
+  const httpStatus = Number.isInteger(status) && status >= 400 && status <= 599 ? status : 500;
+  // Don't leak internal error text on 5xx in production — only surface
+  // deliberate client-facing (4xx) messages.
+  const isProd = process.env.NODE_ENV === 'production';
+  const message =
+    httpStatus < 500
+      ? err.message || 'Request error'
+      : isProd
+        ? 'Internal server error'
+        : err.message || 'Internal server error';
+  res.status(httpStatus).json({ success: false, error: message });
 });
 
 app.listen(port, () => {

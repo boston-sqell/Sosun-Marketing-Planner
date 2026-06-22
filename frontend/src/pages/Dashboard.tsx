@@ -20,6 +20,8 @@ import {
 } from 'lucide-react';
 import { parseDate, formatTimeAgo, toDisplayDate } from '../utils/dateUtils';
 import { driveApi } from '../services/driveApi';
+import { tasksApi } from '../services/tasksApi';
+import { campaignsApi } from '../services/campaignsApi';
 import { useAuth } from '../context/AuthContext';
 import { useBrandScope } from '../context/BrandScopeContext';
 import { useCalendarItems } from '../hooks/useCalendarItems';
@@ -62,30 +64,44 @@ export const Dashboard: React.FC = () => {
 
     const unsubs: Array<() => void> = [];
 
-    unsubs.push(onSnapshot(query(collection(db, 'campaigns'), limit(30)), snap => {
-      setCampaigns(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as CampaignData)));
-    }, err => console.error('Error listening to campaigns:', err)));
+    if (role === 'agency' || role === 'external_agency') {
+      campaignsApi.list().then(list => {
+        setCampaigns(list);
+      }).catch(err => console.error('Error fetching campaigns:', err));
 
-    unsubs.push(onSnapshot(query(collection(db, 'tasks'), orderBy('createdAt', 'desc'), limit(50)), snap => {
-      setTasks(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as TaskData)));
-      setLoading(false);
-    }, err => { console.error('Error listening to tasks:', err); setLoading(false); }));
+      tasksApi.list().then(list => {
+        setTasks(list);
+        setLoading(false);
+      }).catch(err => {
+        console.error('Error fetching tasks:', err);
+        setLoading(false);
+      });
+    } else {
+      unsubs.push(onSnapshot(query(collection(db, 'campaigns'), limit(30)), snap => {
+        setCampaigns(snap.docs.map(doc => ({ ...doc.data(), id: doc.id } as CampaignData)));
+      }, err => console.error('Error listening to campaigns:', err)));
+
+      unsubs.push(onSnapshot(query(collection(db, 'tasks'), orderBy('createdAt', 'desc'), limit(50)), snap => {
+        setTasks(snap.docs.map(doc => ({ ...doc.data(), id: doc.id } as TaskData)));
+        setLoading(false);
+      }, err => { console.error('Error listening to tasks:', err); setLoading(false); }));
+    }
 
     unsubs.push(onSnapshot(query(collection(db, 'activities'), orderBy('time', 'desc'), limit(30)), snap => {
-      setActivities(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      setActivities(snap.docs.map(doc => ({ ...doc.data(), id: doc.id })));
     }, err => console.error('Error listening to activities:', err)));
 
     unsubs.push(onSnapshot(collection(db, 'events'), snap => {
-      setEvents(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as EventData)));
+      setEvents(snap.docs.map(doc => ({ ...doc.data(), id: doc.id } as EventData)));
     }, err => console.warn('events listener:', err.message)));
 
     unsubs.push(onSnapshot(collection(db, 'distributions'), snap => {
-      setDists(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Distribution)));
+      setDists(snap.docs.map(doc => ({ ...doc.data(), id: doc.id } as Distribution)));
     }, err => console.warn('distributions listener:', err.message)));
 
     if (canSeeBudget) {
       unsubs.push(onSnapshot(collection(db, 'budgetEntries'), snap => {
-        setLedger(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as BudgetEntry)));
+        setLedger(snap.docs.map(doc => ({ ...doc.data(), id: doc.id } as BudgetEntry)));
       }, err => console.warn('ledger listener:', err.message)));
     }
 
@@ -93,7 +109,7 @@ export const Dashboard: React.FC = () => {
     driveApi.getMetrics().then(setMedia).catch(() => setMedia(null));
 
     return () => unsubs.forEach(u => u());
-  }, [canSeeBudget]);
+  }, [role, canSeeBudget]);
 
   /* ----------------------------- Scoped derivations ----------------------------- */
 
@@ -201,7 +217,17 @@ export const Dashboard: React.FC = () => {
     return Math.min(100, Math.round((completedCount / campaignTasks.length) * 100));
   };
 
-  const todaysTasks = scopedTasks.filter(t => t.status && t.status.toLowerCase() !== 'published').slice(0, 4);
+  const todaysTasks = useMemo(() => {
+    const sorted = [...scopedTasks].sort((a, b) => {
+      const termA = (a.isTerminal || a.statusPhase === 'terminal') ? 1 : 0;
+      const termB = (b.isTerminal || b.statusPhase === 'terminal') ? 1 : 0;
+      if (termA !== termB) return termA - termB;
+      const dateA = a.createdAt || '';
+      const dateB = b.createdAt || '';
+      return dateB.localeCompare(dateA);
+    });
+    return sorted.slice(0, 8);
+  }, [scopedTasks]);
 
   const fallbackActivity = [
     { id: 'f1', type: 'campaign', user: 'Aminath Ali', action: 'created campaign', target: 'Eid Festive Sale 2026', time: new Date(Date.now() - 10 * 60000).toISOString() },
@@ -567,7 +593,12 @@ export const Dashboard: React.FC = () => {
               ) : todaysTasks.map((t: any) => (
                 <div key={t.id} style={{ borderBottom: '1px solid var(--border)', paddingBottom: '12px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                    <span style={{ fontWeight: 600, fontSize: '13px' }}>{t.title}</span>
+                    <span style={{
+                      fontWeight: 600,
+                      fontSize: '13px',
+                      textDecoration: (t.isTerminal || t.statusPhase === 'terminal') ? 'line-through' : 'none',
+                      color: (t.isTerminal || t.statusPhase === 'terminal') ? '#767676' : 'inherit'
+                    }}>{t.title}</span>
                     <span className={`badge ${t.priority ? t.priority.toLowerCase() : 'medium'}`}>{t.priority}</span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>

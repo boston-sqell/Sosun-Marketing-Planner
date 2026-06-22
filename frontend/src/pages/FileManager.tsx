@@ -30,7 +30,7 @@ export const FileManager: React.FC = () => {
     try {
       setLoading(true);
       const snap = await getDocs(collection(db, 'assets'));
-      const list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as FileAsset));
+      const list = snap.docs.map(doc => ({ ...doc.data(), id: doc.id } as FileAsset));
       
       if (list.length === 0) {
         setAssets(mockAssets);

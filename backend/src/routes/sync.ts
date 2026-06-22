@@ -159,7 +159,7 @@ router.post('/import', requireAuth, requireRole('admin', 'internal'), async (req
     console.log('Starting import sync from Google Sheets to Firestore...');
 
     // 1. Import CAMPAIGNS
-    const campaignsSheetData = await readSheet(SPREADSHEET_ID, 'CAMPAIGNS!A1:L');
+    const campaignsSheetData = await readSheet(SPREADSHEET_ID, 'CAMPAIGNS!A1:M');
     let campaignsImported = 0;
 
     if (campaignsSheetData.length > 1) {
@@ -192,12 +192,16 @@ router.post('/import', requireAuth, requireRole('admin', 'internal'), async (req
               'Platforms': 'platforms',
               'Posts Planned': 'postsPlanned',
               'Budget': 'budget',
-              'Notes': 'notes'
+              'Notes': 'notes',
+              'Asset Links': 'assetLinks'
             };
             const key = map[header];
             if (key) {
               if (key === 'platforms' && val) {
                 obj[key] = String(val).split(',').map(p => p.trim()).filter(Boolean);
+              } else if (key === 'assetLinks') {
+                // Push joins assetLinks with ' | '; split back into an array (round-trip safe).
+                obj[key] = val ? String(val).split('|').map(s => s.trim()).filter(Boolean) : [];
               } else if (key === 'postsPlanned' || key === 'budget') {
                 obj[key] = Number(val) || 0;
               } else if (key === 'startDate' || key === 'endDate') {

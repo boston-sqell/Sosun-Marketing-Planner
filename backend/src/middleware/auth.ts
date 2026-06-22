@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { auth } from '../services/firestore';
 
-export type AppRole = 'admin' | 'internal' | 'agency';
+export type AppRole = 'admin' | 'internal' | 'agency' | 'external_agency' | 'media' | 'sponsor' | 'supplier';
 
 // Augment Express Request with the decoded auth context
 export interface AuthedRequest extends Request {
@@ -24,6 +24,9 @@ export async function requireAuth(req: AuthedRequest, res: Response, next: NextF
   const token = header.split('Bearer ')[1];
   try {
     const decoded = await auth.verifyIdToken(token);
+
+
+
     req.uid = decoded.uid;
     req.email = decoded.email;
     req.role = (decoded.role as AppRole) || 'agency'; // Least-privilege default

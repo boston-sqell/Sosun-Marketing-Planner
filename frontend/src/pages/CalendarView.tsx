@@ -1,8 +1,9 @@
 import React, { useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import {
   ChevronLeft, ChevronRight, Calendar as CalIcon, List, X,
-  Megaphone, CheckSquare, Tent,
+  Megaphone, CheckSquare, Tent, Video,
 } from 'lucide-react';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { toDisplayDate } from '../utils/dateUtils';
@@ -17,7 +18,7 @@ const MONTH_NAMES = [
 const DAYS_SHORT  = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const DAYS_NARROW = ['S',   'M',   'T',   'W',   'T',   'F',   'S'];
 
-const KIND_ICON = { task: CheckSquare, campaign: Megaphone, event: Tent } as const;
+const KIND_ICON = { task: CheckSquare, campaign: Megaphone, event: Tent, meeting: Video } as const;
 
 export const CalendarView: React.FC = () => {
   const { profile } = useAuth();
@@ -27,7 +28,9 @@ export const CalendarView: React.FC = () => {
 
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewMode, setViewMode] = useState<'month' | 'list'>('month');
-  const [filterKind, setFilterKind] = useState<'All' | 'task' | 'campaign' | 'event'>('All');
+  const [filterKind, setFilterKind] = useState<'All' | 'task' | 'campaign' | 'event' | 'meeting'>('All');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const filterPending = searchParams.get('filter') === 'pending';
   const [selectedCellDate, setSelectedCellDate] = useState<Date | null>(null);
   const [isDateModalOpen, setIsDateModalOpen] = useState(false);
 
@@ -40,6 +43,11 @@ export const CalendarView: React.FC = () => {
   const { items, byDay, loading, dayKey } = useCalendarItems(windowStart, windowEnd);
 
   const visible = (i: CalendarItem) => {
+    if (filterPending) {
+      if (i.kind !== 'task') return false;
+      const task = i.raw as TaskData;
+      return task.statusPhase === 'pending';
+    }
     if (filterKind !== 'All' && i.kind !== filterKind) return false;
     if (isAgency && i.kind === 'task' && i.status === 'Idea') return false;
     return true;
@@ -74,6 +82,11 @@ export const CalendarView: React.FC = () => {
   const chip = (item: CalendarItem) => {
     const color = colorOf(item.brands[0]);
     const Icon  = KIND_ICON[item.kind];
+    const isPendingTask = item.kind === 'task' && (item.raw as TaskData).statusPhase === 'pending';
+    const borderLeft = isPendingTask
+      ? '3.5px solid #fd7e14'
+      : `2.5px solid ${color}`;
+      
     return (
       <div
         key={`${item.kind}-${item.id}`}
@@ -82,7 +95,7 @@ export const CalendarView: React.FC = () => {
           fontSize: '10px', padding: '3px 6px', borderRadius: '4px', fontWeight: 600,
           whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
           display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer',
-          backgroundColor: `${color}1A`, color, borderLeft: `2.5px solid ${color}`,
+          backgroundColor: `${color}1A`, color, borderLeft,
         }}
       >
         <Icon size={10} style={{ flexShrink: 0 }} />
@@ -130,17 +143,43 @@ export const CalendarView: React.FC = () => {
           <button className="btn-icon" onClick={handleNextMonth}><ChevronRight size={16} /></button>
         </div>
 
-        {/* Kind filter */}
-        <select
-          value={filterKind}
-          onChange={e => setFilterKind(e.target.value as typeof filterKind)}
-          className="cal-filter-select"
-        >
-          <option value="All">All Entries</option>
-          <option value="task">Content Tasks</option>
-          <option value="campaign">Campaigns</option>
-          <option value="event">Events</option>
-        </select>
+        {/* Filter controls */}
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          {/* Pending Filter Button */}
+          <button
+            className={`btn ${filterPending ? 'btn-primary' : 'btn-secondary'}`}
+            onClick={() => {
+              setSearchParams(prev => {
+                const next = new URLSearchParams(prev);
+                if (filterPending) {
+                  next.delete('filter');
+                } else {
+                  next.set('filter', 'pending');
+                }
+                return next;
+              }, { replace: true });
+            }}
+            title="Show tasks waiting for action or review."
+            style={{ padding: '8px 14px', display: 'flex', alignItems: 'center', gap: '6px' }}
+          >
+            <span style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', backgroundColor: filterPending ? '#fff' : '#f1c40f' }}></span>
+            <span>Pending</span>
+          </button>
+
+          {/* Kind filter */}
+          <select
+            value={filterKind}
+            onChange={e => setFilterKind(e.target.value as typeof filterKind)}
+            className="cal-filter-select"
+            disabled={filterPending}
+          >
+            <option value="All">All Entries</option>
+            <option value="task">Content Tasks</option>
+            <option value="meeting">Meetings</option>
+            <option value="campaign">Campaigns</option>
+            <option value="event">Events</option>
+          </select>
+        </div>
       </div>
 
       {loading ? (
@@ -307,6 +346,7 @@ export const CalendarView: React.FC = () => {
                       const color = colorOf(item.brands[0]);
                       const Icon  = KIND_ICON[item.kind];
                       const task  = item.kind === 'task' ? (item.raw as TaskData) : null;
+                      const meeting = item.kind === 'meeting' ? (item.raw as any) : null;
                       return (
                         <div
                           key={`${item.kind}-${item.id}`}
@@ -337,6 +377,20 @@ export const CalendarView: React.FC = () => {
                             </div>
                           )}
 
+                          {meeting && (
+                            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '8px' }}>
+                              <strong>Time:</strong> {meeting.startDate ? new Date(meeting.startDate).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }) : '—'} to {meeting.endDate ? new Date(meeting.endDate).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }) : '—'}
+                              <br />
+                              <strong>Location / Link:</strong> {meeting.location || '—'}
+                              {meeting.visibility && (
+                                <>
+                                  <br />
+                                  <strong>Visibility:</strong> {meeting.visibility === 'internal' ? 'Internal' : meeting.visibility === 'agency' ? 'Marketing Agency' : 'External'}
+                                </>
+                              )}
+                            </div>
+                          )}
+
                           {task?.caption && (
                             <div style={{ marginTop: '8px' }}>
                               <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 700 }}>CAPTION / BRIEF</span>
@@ -350,7 +404,33 @@ export const CalendarView: React.FC = () => {
                             </div>
                           )}
 
-                          {item.kind !== 'task' && +item.start !== +item.end && (
+                          {meeting?.agenda && (
+                            <div style={{ marginTop: '8px' }}>
+                              <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 700 }}>AGENDA</span>
+                              <p style={{
+                                fontSize: '12px', backgroundColor: 'var(--card)', padding: '8px 12px',
+                                borderRadius: '6px', border: '1px solid var(--border)', marginTop: '2px',
+                                whiteSpace: 'pre-wrap', maxHeight: '80px', overflowY: 'auto',
+                              }}>
+                                {meeting.agenda}
+                              </p>
+                            </div>
+                          )}
+
+                          {meeting?.notes && (role === 'admin' || role === 'internal') && (
+                            <div style={{ marginTop: '8px' }}>
+                              <span style={{ fontSize: '10px', color: 'var(--red)', fontWeight: 700 }}>INTERNAL NOTES (INTERNAL ONLY)</span>
+                              <p style={{
+                                fontSize: '12px', backgroundColor: 'var(--card)', padding: '8px 12px',
+                                borderRadius: '6px', border: '1px dashed var(--red)', marginTop: '2px',
+                                whiteSpace: 'pre-wrap', maxHeight: '80px', overflowY: 'auto',
+                              }}>
+                                {meeting.notes}
+                              </p>
+                            </div>
+                          )}
+
+                          {item.kind !== 'task' && item.kind !== 'meeting' && +item.start !== +item.end && (
                             <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
                               Runs {toDisplayDate(item.start.toISOString().slice(0, 10))} → {toDisplayDate(item.end.toISOString().slice(0, 10))}
                             </div>

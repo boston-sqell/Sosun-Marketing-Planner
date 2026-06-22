@@ -1,4 +1,4 @@
-export type UserRole = 'admin' | 'internal' | 'agency';
+export type UserRole = 'admin' | 'internal' | 'agency' | 'external_agency' | 'media' | 'sponsor' | 'supplier';
 
 export interface UserProfile {
   uid: string;
@@ -11,8 +11,8 @@ export interface UserProfile {
 export interface UserItem {
   uid: string;
   displayName: string;
-  email: string;
   role: UserRole;
+  email?: string; // email is optional
 }
 
 export interface ChecklistItem {
@@ -27,6 +27,11 @@ export interface CommentItem {
   role: string;
   text: string;
   time: string;
+  internalOnly?: boolean;
+  internal_only?: boolean;
+  createdAt?: string;
+  userUid?: string;
+  editedAt?: string;
 }
 
 export interface TaskData {
@@ -38,6 +43,9 @@ export interface TaskData {
   campaignId: string;
   priority: string;
   status: string;
+  statusId?: string;
+  statusPhase?: string;
+  isTerminal?: boolean;
   assignedTo: string;
   submittedBy: string;
   briefDate?: string;
@@ -57,6 +65,16 @@ export interface TaskData {
   comments?: CommentItem[];
   progress?: number;
   createdAt?: string;      // ISO — used for newest-first ordering in Tasks & Queue
+
+  // Meeting fields
+  type?: 'task' | 'meeting';
+  visibility?: 'internal' | 'agency' | 'external';
+  startDate?: string;       // ISO datetime
+  endDate?: string;         // ISO datetime
+  location?: string;
+  agenda?: string;
+  invitedGuests?: string[]; // array of user UIDs
+  calendarEventId?: string;
 }
 
 export interface CampaignData {

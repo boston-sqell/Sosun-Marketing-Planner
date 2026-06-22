@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import { requireAuth, requireRole, AuthedRequest } from '../middleware/auth';
+import { db } from '../services/firestore';
+import { createCalendarEvent, updateCalendarEvent, deleteCalendarEvent } from '../services/calendar';
 import {
   isPushReady,
   getVapidPublicKey,
@@ -145,10 +147,10 @@ router.post('/test', requireRole('admin'), async (req: AuthedRequest, res, next)
 
 // ── POST /api/push/notify-task ──────────────────────────────────────────────
 // Triggers notifications when a task is assigned.
-router.post('/notify-task', async (req: AuthedRequest, res, next) => {
+router.post('/notify-task', requireRole('admin', 'internal'), async (req: AuthedRequest, res, next) => {
   try {
     const { taskId, action, title, assignedTo } = req.body || {};
-    if (!taskId || !title || !assignedTo) {
+    if (!taskId || !title || !assignedTo || !action) {
       return res.status(400).json({ success: false, error: 'Missing required fields.' });
     }
 
@@ -157,6 +159,8 @@ router.post('/notify-task', async (req: AuthedRequest, res, next) => {
       rolesToNotify = ['agency', 'admin'];
     } else if (assignedTo === 'Internal') {
       rolesToNotify = ['internal', 'admin'];
+    } else if (assignedTo === 'Both') {
+      rolesToNotify = ['agency', 'internal', 'admin'];
     }
 
     if (rolesToNotify.length > 0) {
@@ -171,6 +175,99 @@ router.post('/notify-task', async (req: AuthedRequest, res, next) => {
     }
 
     res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── POST /api/push/notify-meeting ──────────────────────────────────────────
+// Triggers notifications and syncs with Google Calendar when a meeting is created, updated, or deleted.
+router.post('/notify-meeting', requireRole('admin', 'internal'), async (req: AuthedRequest, res, next) => {
+  try {
+    const { meetingId, action, title, visibility, invitedGuests } = req.body || {};
+    if (!meetingId || !title || !visibility) {
+      return res.status(400).json({ success: false, error: 'Missing required fields.' });
+    }
+
+    if (action === 'Deleted') {
+      const meetingDoc = await db.collection('tasks').doc(meetingId).get();
+      if (meetingDoc.exists) {
+        const meeting = meetingDoc.data();
+        if (meeting?.calendarEventId) {
+          try {
+            await deleteCalendarEvent(meeting.calendarEventId);
+          } catch (calErr: any) {
+            console.error('Google Calendar Deletion error:', calErr.message);
+          }
+        }
+      }
+      return res.json({ success: true });
+    }
+
+    // Fetch meeting document from Firestore to get full details
+    const meetingDoc = await db.collection('tasks').doc(meetingId).get();
+    if (!meetingDoc.exists) {
+      return res.status(404).json({ success: false, error: 'Meeting not found.' });
+    }
+    const meeting = meetingDoc.data();
+
+    // Determine guest emails based on visibility and invited list
+    const usersSnapshot = await db.collection('users').get();
+    const allUsers = usersSnapshot.docs.map(doc => doc.data());
+
+    const internalEmails = allUsers
+      .filter((u: any) => u.role === 'admin' || u.role === 'internal')
+      .map((u: any) => u.email);
+
+    const agencyEmails = allUsers
+      .filter((u: any) => u.role === 'agency')
+      .map((u: any) => u.email);
+
+    let guestEmails: string[] = [];
+
+    if (visibility === 'agency') {
+      // Invite all internal team and all agency partners
+      guestEmails = [...internalEmails, ...agencyEmails];
+    } else {
+      // Internal or External: restrict to internal team members only (no external partner notifications/emails)
+      guestEmails = [...internalEmails];
+    }
+
+    // Deduplicate emails
+    guestEmails = Array.from(new Set(guestEmails.filter(Boolean)));
+
+    // Sync to Google Calendar
+    let calendarEventId = meeting?.calendarEventId || null;
+    try {
+      if (calendarEventId) {
+        await updateCalendarEvent(calendarEventId, meeting, guestEmails);
+      } else {
+        calendarEventId = await createCalendarEvent(meeting, guestEmails);
+        if (calendarEventId) {
+          await db.collection('tasks').doc(meetingId).update({ calendarEventId });
+        }
+      }
+    } catch (calErr: any) {
+      console.error('Google Calendar Sync error:', calErr.message);
+    }
+
+    // Trigger Push Notifications
+    const payload = {
+      title: `Meeting ${action}: ${title}`,
+      body: `A meeting has been scheduled: ${meeting?.agenda || 'No agenda'}. Location: ${meeting?.location || 'N/A'}.`,
+      url: '/tasks',
+      tag: `meeting-${meetingId}`,
+    };
+
+    if (visibility === 'agency') {
+      // Notify internal + agency
+      await sendPushToRoles(['admin', 'internal', 'agency'], payload);
+    } else {
+      // Internal or External: Notify internal team members only
+      await sendPushToRoles(['admin', 'internal'], payload);
+    }
+
+    res.json({ success: true, calendarEventId });
   } catch (err) {
     next(err);
   }

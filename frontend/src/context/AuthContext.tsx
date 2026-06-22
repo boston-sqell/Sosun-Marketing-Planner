@@ -42,6 +42,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [emailVerified, setEmailVerified] = useState(false);
+  // Authoritative role comes from the VERIFIED custom claim on the ID token, not
+  // the Firestore profile doc (which a user can edit on their own record).
+  const [claimRole, setClaimRole] = useState<UserRole | null>(null);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
@@ -113,10 +116,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             role: 'agency' // Fallback to external agency — admins can promote later
           });
         }
+        // Read the authoritative role from the verified custom claim (refreshed
+        // above if a claim was just provisioned). Falls back to null if absent.
+        try {
+          const tokenResult = await firebaseUser.getIdTokenResult();
+          setClaimRole((tokenResult.claims.role as UserRole) || null);
+        } catch {
+          setClaimRole(null);
+        }
       } else {
         setUser(null);
         setProfile(null);
         setEmailVerified(false);
+        setClaimRole(null);
       }
       setLoading(false);
     });
@@ -131,8 +143,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     const unsub = onIdTokenChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
-        await firebaseUser.getIdToken();
+        const tokenResult = await firebaseUser.getIdTokenResult();
         setEmailVerified(firebaseUser.emailVerified);
+        setClaimRole((tokenResult.claims.role as UserRole) || null);
       }
     });
     return () => unsub();
@@ -234,7 +247,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       user,
       profile,
       loading,
-      role: profile ? profile.role : null,
+      // Authoritative: verified claim first; profile.role is only a display
+      // fallback during the brief window before the token result resolves.
+      role: claimRole ?? (profile ? profile.role : null),
       error,
       emailVerified,
       resendVerification,

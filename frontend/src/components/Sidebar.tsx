@@ -56,6 +56,7 @@ export const Sidebar: React.FC = () => {
   const roleLabel =
     role === 'admin'    ? 'Administrator' :
     role === 'internal' ? 'Internal Marketing' :
+    role === 'external_agency' ? 'Agency Partner' :
     'Agency Partner';
 
   return (
@@ -91,8 +92,11 @@ export const Sidebar: React.FC = () => {
 
           <div className="sidebar-user">
             <div className="user-info">
-              <div className="user-name" title={profile?.displayName}>
-                {profile?.displayName || 'User'}
+              <div className="user-name" title={profile?.displayName} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{profile?.displayName || 'User'}</span>
+                {(role === 'agency' || role === 'external_agency') && (
+                  <span className="badge agency-badge" style={{ fontSize: '10px', padding: '1px 6px', backgroundColor: 'var(--color-warning-light, #fef9c3)', color: '#a16207', borderRadius: '10px', fontWeight: 700, border: '1px solid #fef08a' }}>Agency</span>
+                )}
               </div>
               <div className="user-role">{roleLabel}</div>
             </div>

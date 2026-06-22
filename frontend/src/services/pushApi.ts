@@ -78,6 +78,13 @@ export const pushApi = {
       body: JSON.stringify({ taskId, title, assignedTo, action }),
     }),
 
+  /** Notify users when a meeting is scheduled/updated/deleted. */
+  notifyMeetingScheduled: (meetingId: string, title: string, visibility: string, action: 'Scheduled' | 'Rescheduled' | 'Deleted' = 'Scheduled', invitedGuests?: string[]) =>
+    call<{ success: boolean }>('/notify-meeting', {
+      method: 'POST',
+      body: JSON.stringify({ meetingId, title, visibility, action, invitedGuests }),
+    }),
+
   /** Admin: send a test notification to the current user only. */
   testPush: () =>
     call<SendResult & { success: boolean }>('/test', { method: 'POST' }),

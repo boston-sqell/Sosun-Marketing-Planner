@@ -223,7 +223,7 @@ export async function sendPushToRoles(roles: string[], payload: PushPayload): Pr
     const sub = doc.data();
     try {
       const pSub = { endpoint: sub.endpoint, keys: sub.keys };
-      await webpush.sendNotification(pSub, strPayload, { VAPID_PUBLIC_KEY: getVapidPublicKey() } as any);
+      await webpush.sendNotification(pSub, strPayload, { TTL: 86400, urgency: 'normal' });
       sent++;
     } catch (err: any) {
       if (err.statusCode === 404 || err.statusCode === 410) {

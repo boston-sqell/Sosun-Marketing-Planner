@@ -37,25 +37,44 @@ const router = Router();
 
 // MEDIA_TOKEN_SECRET is validated at startup in server.ts — it will never be undefined here.
 const MEDIA_TOKEN_SECRET = process.env.MEDIA_TOKEN_SECRET as string;
-const MEDIA_TOKEN_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+const MEDIA_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour — shorter leak window; the
+// client auto-refreshes off the returned expiresInMs, so this is transparent.
 
-function signMediaToken(): string {
+// Token format: `${exp}.${uid}.${sig}` where sig = HMAC(`${exp}.${uid}`). Binding
+// the uid makes a leaked token attributable to a single user (and lets it be
+// revoked/enforced per-user later) rather than an anonymous app-wide pass.
+function signMediaToken(uid: string): string {
   const exp = Date.now() + MEDIA_TOKEN_TTL_MS;
-  const sig = crypto.createHmac('sha256', MEDIA_TOKEN_SECRET).update(String(exp)).digest('hex');
-  return `${exp}.${sig}`;
+  const payload = `${exp}.${uid}`;
+  const sig = crypto.createHmac('sha256', MEDIA_TOKEN_SECRET).update(payload).digest('hex');
+  return `${payload}.${sig}`;
 }
 
 function verifyMediaToken(token: string): boolean {
-  const [expStr, sig] = String(token).split('.');
-  if (!expStr || !sig) return false;
+  const parts = String(token).split('.');
+  if (parts.length !== 3) return false;
+  const [expStr, uid, sig] = parts;
+  if (!expStr || !uid || !sig) return false;
   const exp = Number(expStr);
   if (!exp || exp < Date.now()) return false;
-  const expected = crypto.createHmac('sha256', MEDIA_TOKEN_SECRET).update(expStr).digest('hex');
+  const expected = crypto.createHmac('sha256', MEDIA_TOKEN_SECRET).update(`${expStr}.${uid}`).digest('hex');
   try {
     return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
   } catch {
     return false;
   }
+}
+
+// Sanitize a user-supplied download filename before putting it in a
+// Content-Disposition header: strip quotes, backslashes and control chars so a
+// crafted `?name=` can't break out of the quoted-string / inject header bytes.
+function safeFilename(name: unknown, fallback: string): string {
+  const cleaned = String(name ?? '')
+    .replace(/[\r\n"\\]/g, '')
+    .replace(/[\x00-\x1f\x7f]/g, '')
+    .trim()
+    .slice(0, 255);
+  return cleaned || fallback;
 }
 
 // Shared secret for Cloud Scheduler (or any cron) to trigger background sync.
@@ -82,9 +101,9 @@ router.use((req, res, next: NextFunction) => {
   return requireAuth(req as AuthedRequest, res, next);
 });
 
-// Issue a media token to the authenticated client.
-router.get('/media-token', (_req, res) => {
-  res.json({ success: true, token: signMediaToken(), expiresInMs: MEDIA_TOKEN_TTL_MS });
+// Issue a media token to the authenticated client (bound to their uid).
+router.get('/media-token', (req: AuthedRequest, res) => {
+  res.json({ success: true, token: signMediaToken(req.uid || ''), expiresInMs: MEDIA_TOKEN_TTL_MS });
 });
 
 const MEDIA = db.collection('mediaAssets');
@@ -369,7 +388,7 @@ router.post('/folders', requireRole('admin', 'internal'), async (req, res, next)
 /* --------------------------------- Uploads --------------------------------- */
 
 // Start a resumable upload session; the browser PUTs bytes to the returned URL.
-router.post('/upload-session', async (req: AuthedRequest, res, next) => {
+router.post('/upload-session', requireRole('admin', 'internal'), async (req: AuthedRequest, res, next) => {
   try {
     const ws = await requireConfigured(res);
     if (!ws) return;
@@ -448,7 +467,7 @@ async function indexDriveFile(
 }
 
 // Record metadata for an uploaded Drive file (Drive stays authoritative).
-router.post('/assets', async (req: AuthedRequest, res, next) => {
+router.post('/assets', requireRole('admin', 'internal'), async (req: AuthedRequest, res, next) => {
   try {
     const ws = await requireConfigured(res);
     if (!ws) return;
@@ -477,7 +496,7 @@ router.post('/assets', async (req: AuthedRequest, res, next) => {
 });
 
 // Link an existing Drive file (by id or URL) into the library.
-router.post('/assets/link', async (req: AuthedRequest, res, next) => {
+router.post('/assets/link', requireRole('admin', 'internal'), async (req: AuthedRequest, res, next) => {
   try {
     const ws = await requireConfigured(res);
     if (!ws) return;
@@ -536,7 +555,7 @@ router.post('/import/folder', requireRole('admin', 'internal'), async (req: Auth
 });
 
 // Add a new version to an existing asset's version group.
-router.post('/assets/:id/versions', async (req: AuthedRequest, res, next) => {
+router.post('/assets/:id/versions', requireRole('admin', 'internal'), async (req: AuthedRequest, res, next) => {
   try {
     const ws = await requireConfigured(res);
     if (!ws) return;
@@ -580,7 +599,7 @@ router.post('/assets/:id/versions', async (req: AuthedRequest, res, next) => {
 });
 
 // Add an approval/comment entry to an asset.
-router.post('/assets/:id/comments', async (req: AuthedRequest, res, next) => {
+router.post('/assets/:id/comments', requireRole('admin', 'internal'), async (req: AuthedRequest, res, next) => {
   try {
     const id = req.params.id;
     const snap = await MEDIA.doc(id).get();
@@ -632,7 +651,7 @@ router.get('/assets/:id/revisions', async (req, res, next) => {
 });
 
 // Start a resumable session that uploads a NEW revision onto the same file id.
-router.post('/assets/:id/revision-session', async (req: AuthedRequest, res, next) => {
+router.post('/assets/:id/revision-session', requireRole('admin', 'internal'), async (req: AuthedRequest, res, next) => {
   try {
     const ws = await requireConfigured(res);
     if (!ws) return;
@@ -647,7 +666,7 @@ router.post('/assets/:id/revision-session', async (req: AuthedRequest, res, next
 });
 
 // After a revision upload completes, refresh the index entry and log it.
-router.post('/assets/:id/revision-complete', async (req: AuthedRequest, res, next) => {
+router.post('/assets/:id/revision-complete', requireRole('admin', 'internal'), async (req: AuthedRequest, res, next) => {
   try {
     const ws = await requireConfigured(res);
     if (!ws) return;
@@ -676,7 +695,7 @@ router.post('/assets/:id/revision-complete', async (req: AuthedRequest, res, nex
 });
 
 // Pin/unpin a revision (e.g. keep the approved one forever).
-router.patch('/assets/:id/revisions/:revId', async (req, res, next) => {
+router.patch('/assets/:id/revisions/:revId', requireRole('admin', 'internal'), async (req, res, next) => {
   try {
     const ws = await requireConfigured(res);
     if (!ws) return;
@@ -740,7 +759,7 @@ router.get('/assets', async (req, res, next) => {
 });
 
 // Update metadata; optionally rename or move the underlying Drive file.
-router.patch('/assets/:id', async (req: AuthedRequest, res, next) => {
+router.patch('/assets/:id', requireRole('admin', 'internal'), async (req: AuthedRequest, res, next) => {
   try {
     const ws = await requireConfigured(res);
     if (!ws) return;
@@ -997,7 +1016,7 @@ router.get('/files/:id/content', async (req, res, next) => {
     }
     if (!upstream.headers.get('accept-ranges')) res.setHeader('Accept-Ranges', 'bytes');
     if (req.query.download) {
-      res.setHeader('Content-Disposition', `attachment; filename="${req.query.name || 'file'}"`);
+      res.setHeader('Content-Disposition', `attachment; filename="${safeFilename(req.query.name, 'file')}"`);
     }
 
     if (!upstream.body) return res.end();
@@ -1028,7 +1047,7 @@ router.get('/files/:id/revisions/:revId/content', async (req, res, next) => {
       if (v) res.setHeader(h, v);
     }
     if (req.query.download) {
-      res.setHeader('Content-Disposition', `attachment; filename="${req.query.name || 'revision'}"`);
+      res.setHeader('Content-Disposition', `attachment; filename="${safeFilename(req.query.name, 'revision')}"`);
     }
     if (!upstream.body) return res.end();
     Readable.fromWeb(upstream.body as any).on('error', next).pipe(res);

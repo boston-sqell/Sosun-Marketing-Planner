@@ -3,7 +3,7 @@ import { auth, db } from '../services/firestore';
 
 const router = Router();
 
-const VALID_ROLES = ['admin', 'internal', 'agency'];
+const VALID_ROLES = ['admin', 'internal', 'agency', 'external_agency', 'media', 'sponsor', 'supplier'];
 
 async function verifyToken(authHeader: string | undefined) {
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -36,6 +36,7 @@ router.post('/set-role', async (req, res) => {
     if (isSelf && !isAdmin && role !== 'agency') {
       return res.status(403).json({ success: false, error: 'Forbidden: self-registration may only set role to agency' });
     }
+
 
     await auth.setCustomUserClaims(uid, { role });
     await db.collection('users').doc(uid).set({ role }, { merge: true });
@@ -120,6 +121,51 @@ router.delete('/:uid', async (req, res) => {
     return res.json({ success: true });
   } catch (err: any) {
     console.error('Error deleting user:', err);
+    return res.status((err as any).status || 500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/roles', async (req, res) => {
+  try {
+    // Authenticate the user
+    await verifyToken(req.headers.authorization);
+
+    const manifest = {
+      external_agency: {
+        campaigns: {
+          view: true,
+          create: false,
+          edit: false,
+          delete: false,
+          view_financials: false,
+        },
+        tasks: {
+          view: true,
+          create: false,
+          edit: false,
+          delete: false,
+          change_status: 'own_assigned_only',
+        },
+        checklists: {
+          view: true,
+          check: 'own_assigned_only',
+          create: false,
+          edit: false,
+          delete: false,
+        },
+        comments: {
+          view: true,
+          create: 'own_assigned_only',
+          edit: 'own_only_15m',
+          delete: false,
+          view_internal_only: false,
+        },
+      },
+    };
+
+    return res.json({ success: true, roles: manifest });
+  } catch (err: any) {
+    console.error('Error fetching roles manifest:', err);
     return res.status((err as any).status || 500).json({ success: false, error: err.message });
   }
 });

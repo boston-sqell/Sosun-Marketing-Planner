@@ -3,13 +3,14 @@ import { useAuth } from '../context/AuthContext';
 import { useBrandScope } from '../context/BrandScopeContext';
 import { triggerSheetsBackup } from '../services/syncApi';
 import { db } from '../firebase/config';
-import { collection, doc, getDocs, setDoc, deleteDoc, updateDoc, query, limit, orderBy, startAfter } from 'firebase/firestore';
+import { collection, doc, setDoc, deleteDoc, updateDoc } from 'firebase/firestore';
 import { Plus, Trash2, Edit, X, Target } from 'lucide-react';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { toDisplayDate } from '../utils/dateUtils';
 import { driveApi } from '../services/driveApi';
 import { mockCampaigns } from '../mockData';
 import type { CampaignData, ChecklistItem } from '../types';
+import { campaignsApi } from '../services/campaignsApi';
 import { logActivity } from '../utils/activityLogger';
 
 export const Campaigns: React.FC = () => {
@@ -25,9 +26,7 @@ export const Campaigns: React.FC = () => {
   const [editingId, setEditingId] = useState<string | null>(null);
   
   // Pagination states
-  const [lastDoc, setLastDoc] = useState<any>(null);
   const [hasMore, setHasMore] = useState(false);
-  const PAGE_LIMIT = 6;
 
   // Form states
   const [name, setName] = useState('');
@@ -53,41 +52,9 @@ export const Campaigns: React.FC = () => {
         setLoading(true);
       }
 
-      let q = query(
-        collection(db, 'campaigns'),
-        orderBy('startDate', 'desc'),
-        limit(PAGE_LIMIT)
-      );
-
-      if (isLoadMore && lastDoc) {
-        q = query(
-          collection(db, 'campaigns'),
-          orderBy('startDate', 'desc'),
-          startAfter(lastDoc),
-          limit(PAGE_LIMIT)
-        );
-      }
-
-      const snap = await getDocs(q);
-      const list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as CampaignData));
-      
-      if (snap.docs.length > 0) {
-        setLastDoc(snap.docs[snap.docs.length - 1]);
-        setHasMore(snap.docs.length === PAGE_LIMIT);
-      } else {
-        setHasMore(false);
-      }
-
-      if (isLoadMore) {
-        setCampaigns(prev => [...prev, ...list]);
-      } else {
-        if (list.length === 0) {
-          setCampaigns(mockCampaigns);
-          setHasMore(false);
-        } else {
-          setCampaigns(list);
-        }
-      }
+      const list = await campaignsApi.list();
+      setCampaigns(list);
+      setHasMore(false);
     } catch (err) {
       console.error('Error loading campaigns, using mock data:', err);
       if (!isLoadMore) {
@@ -300,7 +267,11 @@ export const Campaigns: React.FC = () => {
                   </div>
                   <div>
                     <span style={{ color: 'var(--text-muted)' }}>Budget: </span>
-                    <strong>${campaign.budget?.toLocaleString()}</strong>
+                    {isAgency ? (
+                      <span className="restricted-badge" title="Contact your account manager for budget details" style={{ color: 'var(--warning)', cursor: 'help', textDecoration: 'underline dotted', fontWeight: 600 }}>[Restricted]</span>
+                    ) : (
+                      <strong>${campaign.budget?.toLocaleString()}</strong>
+                    )}
                   </div>
                 </div>
 

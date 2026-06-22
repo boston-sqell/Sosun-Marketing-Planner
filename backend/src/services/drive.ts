@@ -226,11 +226,21 @@ export async function trashFile(fileId: string): Promise<void> {
  * ancestor (or the node itself). This is the workspace boundary check — no
  * client-supplied id is trusted without it. Results are cached per process.
  */
-const ancestryCache = new Map<string, boolean>();
+// Positive-only, time-bounded ancestry cache. We cache ONLY successful
+// "within root" results and only for a short window: caching negatives would
+// keep a file denied after it is moved INTO the workspace, and caching forever
+// would keep a file allowed after it is moved OUT (stale authorization). The
+// TTL bounds both the staleness window and the map's memory growth.
+const ANCESTRY_TTL_MS = 5 * 60 * 1000;
+const ancestryCache = new Map<string, number>(); // cacheKey -> expiry epoch ms
 export async function isWithinRoot(fileId: string, rootId: string): Promise<boolean> {
   if (fileId === rootId) return true;
   const cacheKey = `${rootId}:${fileId}`;
-  if (ancestryCache.has(cacheKey)) return ancestryCache.get(cacheKey)!;
+  const cachedExp = ancestryCache.get(cacheKey);
+  if (cachedExp !== undefined) {
+    if (cachedExp > Date.now()) return true; // fresh positive hit
+    ancestryCache.delete(cacheKey); // expired — re-verify below
+  }
 
   const visited = new Set<string>();
   let frontier = [fileId];
@@ -258,7 +268,7 @@ export async function isWithinRoot(fileId: string, rootId: string): Promise<bool
     frontier = next;
   }
 
-  ancestryCache.set(cacheKey, found);
+  if (found) ancestryCache.set(cacheKey, Date.now() + ANCESTRY_TTL_MS);
   return found;
 }
 

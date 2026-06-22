@@ -8,7 +8,7 @@ REM ============================================================
 cd /d "%~dp0backend"
 
 echo Deploying backend to Cloud Run (sosun-sync-api, us-central1)...
-call gcloud run deploy sosun-sync-api --source . --region us-central1 --project sosun-marketing-planner-2026 --allow-unauthenticated
+call gcloud run deploy sosun-sync-api --source . --region us-central1 --project sosun-marketing-planner-2026 --allow-unauthenticated --update-env-vars NODE_ENV=production
 
 if errorlevel 1 (
   echo.

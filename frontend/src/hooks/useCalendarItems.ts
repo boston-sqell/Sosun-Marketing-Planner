@@ -3,9 +3,12 @@ import { collection, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { parseDate } from '../utils/dateUtils';
 import { useBrandScope } from '../context/BrandScopeContext';
+import { useAuth } from '../context/AuthContext';
 import type { CampaignData, EventData, TaskData } from '../types';
+import { tasksApi } from '../services/tasksApi';
+import { campaignsApi } from '../services/campaignsApi';
 
-export type CalendarItemKind = 'campaign' | 'task' | 'event';
+export type CalendarItemKind = 'campaign' | 'task' | 'event' | 'meeting';
 
 export interface CalendarItem {
   id: string;
@@ -32,6 +35,8 @@ const dayKey = (d: Date) =>
  */
 export function useCalendarItems(windowStart: Date, windowEnd: Date) {
   const { anyInScope } = useBrandScope();
+  const { profile } = useAuth();
+  const role = profile?.role || 'internal';
   const [tasks, setTasks] = useState<TaskData[]>([]);
   const [campaigns, setCampaigns] = useState<CampaignData[]>([]);
   const [events, setEvents] = useState<EventData[]>([]);
@@ -41,20 +46,49 @@ export function useCalendarItems(windowStart: Date, windowEnd: Date) {
     let pending = 3;
     const done = () => { if (--pending <= 0) setLoading(false); };
 
-    const unsubs = [
-      onSnapshot(collection(db, 'tasks'), snap => {
-        setTasks(snap.docs.map(d => ({ id: d.id, ...d.data() } as TaskData)));
+    let unsubs: Array<() => void> = [];
+
+    if (role === 'agency' || role === 'external_agency') {
+      // For agency roles, fetch once from the API since direct Firestore access is restricted
+      tasksApi.list().then(list => {
+        setTasks(list);
         done();
-      }),
-      onSnapshot(collection(db, 'campaigns'), snap => {
-        setCampaigns(snap.docs.map(d => ({ id: d.id, ...d.data() } as CampaignData)));
+      }).catch(err => {
+        console.error('Calendar tasks api fetch failed:', err);
         done();
-      }),
-      onSnapshot(collection(db, 'events'), snap => {
+      });
+
+      campaignsApi.list().then(list => {
+        setCampaigns(list);
+        done();
+      }).catch(err => {
+        console.error('Calendar campaigns api fetch failed:', err);
+        done();
+      });
+
+      // Events is still readable directly from Firestore
+      const unsubEvents = onSnapshot(collection(db, 'events'), snap => {
         setEvents(snap.docs.map(d => ({ id: d.id, ...d.data() } as EventData)));
         done();
-      }),
-    ];
+      });
+      unsubs.push(unsubEvents);
+    } else {
+      // Internal & admin roles can use standard onSnapshot
+      unsubs = [
+        onSnapshot(collection(db, 'tasks'), snap => {
+          setTasks(snap.docs.map(d => ({ id: d.id, ...d.data() } as TaskData)));
+          done();
+        }),
+        onSnapshot(collection(db, 'campaigns'), snap => {
+          setCampaigns(snap.docs.map(d => ({ id: d.id, ...d.data() } as CampaignData)));
+          done();
+        }),
+        onSnapshot(collection(db, 'events'), snap => {
+          setEvents(snap.docs.map(d => ({ id: d.id, ...d.data() } as EventData)));
+          done();
+        }),
+      ];
+    }
     return () => unsubs.forEach(u => u());
   }, []);
 
@@ -62,13 +96,39 @@ export function useCalendarItems(windowStart: Date, windowEnd: Date) {
     const out: CalendarItem[] = [];
 
     for (const t of tasks) {
-      const day = parseDate(t.scheduledDate);
+      const isMeeting = t.type === 'meeting';
+      const day = isMeeting 
+        ? (t.startDate ? new Date(t.startDate) : null) 
+        : parseDate(t.scheduledDate);
+
       if (!day || day < windowStart || day > windowEnd) continue;
       if (!anyInScope([t.brand])) continue;
-      out.push({
-        id: t.id, kind: 'task', title: t.title, brands: [t.brand],
-        start: day, end: day, status: t.status || 'Idea', raw: t,
-      });
+
+      if (isMeeting) {
+        // Enforce visibility
+        if (role === 'agency') {
+          if (t.visibility !== 'agency') continue;
+        } else if (role === 'media' || role === 'sponsor' || role === 'supplier') {
+          if (t.visibility !== 'external') continue;
+        }
+
+        const start = day;
+        const end = t.endDate ? new Date(t.endDate) : start;
+
+        out.push({
+          id: t.id, kind: 'meeting', title: `[Meeting] ${t.title}`, brands: [t.brand],
+          start, end, status: 'Scheduled', raw: t,
+        });
+      } else {
+        // Normal task
+        if (role === 'agency' && t.assignedTo !== 'Agency' && t.assignedTo !== 'Both') continue;
+        if (role === 'media' || role === 'sponsor' || role === 'supplier') continue; // Tasks are hidden from external partners
+
+        out.push({
+          id: t.id, kind: 'task', title: t.title, brands: [t.brand],
+          start: day, end: day, status: t.status || 'Idea', raw: t,
+        });
+      }
     }
 
     for (const c of campaigns) {

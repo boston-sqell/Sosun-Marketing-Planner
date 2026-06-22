@@ -37,6 +37,14 @@ export const parseDate = (dateStr?: string): Date | null => {
   if (parts.length === 3) {
     return new Date(+parts[2], +parts[1] - 1, +parts[0]);
   }
+  // Bare YYYY-MM-DD must be parsed as a LOCAL calendar day. `new Date('2026-06-22')`
+  // is interpreted as UTC midnight, which renders as the previous day in any
+  // timezone behind UTC — shifting calendar items by a day. Build it locally to
+  // match the DD/MM/YYYY branch above.
+  const iso = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) {
+    return new Date(+iso[1], +iso[2] - 1, +iso[3]);
+  }
   const d = new Date(dateStr);
   return isNaN(d.getTime()) ? null : d;
 };
