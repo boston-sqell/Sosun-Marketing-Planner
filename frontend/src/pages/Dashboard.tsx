@@ -35,6 +35,17 @@ const isoToday = () => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
+type ActivityRow = { id: string; type: string; user: string; action: string; target: string; time: string; text?: string };
+
+// Static demo data shown when no real activity exists. Computed once at module
+// load so the relative timestamps aren't recomputed (impurely) during render.
+const FALLBACK_ACTIVITY: ActivityRow[] = [
+  { id: 'f1', type: 'campaign', user: 'Aminath Ali', action: 'created campaign', target: 'Eid Festive Sale 2026', time: new Date(Date.now() - 10 * 60000).toISOString() },
+  { id: 'f2', type: 'task', user: 'Agency Partner', action: 'submitted draft for review', target: 'Summer Collection Showcase Video', time: new Date(Date.now() - 60 * 60000).toISOString() },
+  { id: 'f3', type: 'comment', user: 'Ahmed Nazeer', action: 'commented on task', target: 'Eid Promo Reels Creative Assets', time: new Date(Date.now() - 180 * 60000).toISOString(), text: '"Please adjust the background gradient to match the new HSL variables."' },
+  { id: 'f4', type: 'approval', user: 'Aminath Ali', action: 'approved creative asset for', target: 'Back to School Campaign Graphics', time: new Date(Date.now() - 24 * 3600000).toISOString() },
+];
+
 export const Dashboard: React.FC = () => {
   const navigate = useNavigate();
   const { role } = useAuth();
@@ -43,7 +54,7 @@ export const Dashboard: React.FC = () => {
 
   const [campaigns, setCampaigns] = useState<CampaignData[]>([]);
   const [tasks, setTasks] = useState<TaskData[]>([]);
-  const [activities, setActivities] = useState<any[]>([]);
+  const [activities, setActivities] = useState<ActivityRow[]>([]);
   const [events, setEvents] = useState<EventData[]>([]);
   const [dists, setDists] = useState<Distribution[]>([]);
   const [ledger, setLedger] = useState<BudgetEntry[]>([]);
@@ -65,12 +76,12 @@ export const Dashboard: React.FC = () => {
     const unsubs: Array<() => void> = [];
 
     if (role === 'agency' || role === 'external_agency') {
-      campaignsApi.list().then(list => {
-        setCampaigns(list);
+      campaignsApi.listAll().then(res => {
+        setCampaigns(res.campaigns);
       }).catch(err => console.error('Error fetching campaigns:', err));
 
-      tasksApi.list().then(list => {
-        setTasks(list);
+      tasksApi.listAll().then(res => {
+        setTasks(res.tasks);
         setLoading(false);
       }).catch(err => {
         console.error('Error fetching tasks:', err);
@@ -88,21 +99,21 @@ export const Dashboard: React.FC = () => {
     }
 
     unsubs.push(onSnapshot(query(collection(db, 'activities'), orderBy('time', 'desc'), limit(30)), snap => {
-      setActivities(snap.docs.map(doc => ({ ...doc.data(), id: doc.id })));
+      setActivities(snap.docs.map(doc => ({ ...doc.data(), id: doc.id }) as ActivityRow));
     }, err => console.error('Error listening to activities:', err)));
 
     unsubs.push(onSnapshot(collection(db, 'events'), snap => {
       setEvents(snap.docs.map(doc => ({ ...doc.data(), id: doc.id } as EventData)));
-    }, err => console.warn('events listener:', err.message)));
+    }, err => console.warn('events listener:', (err as Error).message)));
 
     unsubs.push(onSnapshot(collection(db, 'distributions'), snap => {
       setDists(snap.docs.map(doc => ({ ...doc.data(), id: doc.id } as Distribution)));
-    }, err => console.warn('distributions listener:', err.message)));
+    }, err => console.warn('distributions listener:', (err as Error).message)));
 
     if (canSeeBudget) {
       unsubs.push(onSnapshot(collection(db, 'budgetEntries'), snap => {
         setLedger(snap.docs.map(doc => ({ ...doc.data(), id: doc.id } as BudgetEntry)));
-      }, err => console.warn('ledger listener:', err.message)));
+      }, err => console.warn('ledger listener:', (err as Error).message)));
     }
 
     // Media metrics are best-effort: never block the dashboard if Drive isn't set up.
@@ -174,7 +185,7 @@ export const Dashboard: React.FC = () => {
           ...prev,
           [ev.id]: snap.docs.map(d => ({ id: d.id, ...d.data() } as PackingItem)),
         }));
-      }, err => console.warn('packing listener:', err.message)));
+      }, err => console.warn('packing listener:', (err as Error).message)));
     return () => unsubs.forEach(u => u());
   }, [prepEvents.map(e => e.id).join(',')]);
 
@@ -229,14 +240,7 @@ export const Dashboard: React.FC = () => {
     return sorted.slice(0, 8);
   }, [scopedTasks]);
 
-  const fallbackActivity = [
-    { id: 'f1', type: 'campaign', user: 'Aminath Ali', action: 'created campaign', target: 'Eid Festive Sale 2026', time: new Date(Date.now() - 10 * 60000).toISOString() },
-    { id: 'f2', type: 'task', user: 'Agency Partner', action: 'submitted draft for review', target: 'Summer Collection Showcase Video', time: new Date(Date.now() - 60 * 60000).toISOString() },
-    { id: 'f3', type: 'comment', user: 'Ahmed Nazeer', action: 'commented on task', target: 'Eid Promo Reels Creative Assets', time: new Date(Date.now() - 180 * 60000).toISOString(), text: '"Please adjust the background gradient to match the new HSL variables."' },
-    { id: 'f4', type: 'approval', user: 'Aminath Ali', action: 'approved creative asset for', target: 'Back to School Campaign Graphics', time: new Date(Date.now() - 24 * 3600000).toISOString() }
-  ];
-
-  const displayActivities = activities.length > 0 ? activities : fallbackActivity;
+  const displayActivities = activities.length > 0 ? activities : FALLBACK_ACTIVITY;
 
   const getActivityStyles = (type: string) => {
     switch (type) {
@@ -435,7 +439,7 @@ export const Dashboard: React.FC = () => {
           /* Campaigns View */
           !loading && scopedCampaigns.length > 0 ? (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
-              {scopedCampaigns.slice(0, 4).map((c: any) => (
+              {scopedCampaigns.slice(0, 4).map((c) => (
                 <div key={c.id} style={{ border: '1px solid var(--border)', borderRadius: '8px', padding: '16px', borderTop: `3px solid ${colorOf(c.brand)}`, backgroundColor: 'var(--bg)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
                     <div>
@@ -561,7 +565,7 @@ export const Dashboard: React.FC = () => {
                 <span className="badge critical">{overdueTasks.length} Overdue</span>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                {overdueTasks.map((t: any) => {
+                {overdueTasks.map((t) => {
                   const sharedStr = (t.sharedDate || t.reviewDeadline || '').split('-').reverse().join('/');
                   return (
                     <div key={t.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'var(--card)', padding: '12px 16px', borderRadius: '8px', border: '1px solid var(--border)' }}>
@@ -590,7 +594,7 @@ export const Dashboard: React.FC = () => {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {todaysTasks.length === 0 ? (
                 <div style={{ fontSize: '12px', color: 'var(--text-muted)', fontStyle: 'italic' }}>Queue is clear.</div>
-              ) : todaysTasks.map((t: any) => (
+              ) : todaysTasks.map((t) => (
                 <div key={t.id} style={{ borderBottom: '1px solid var(--border)', paddingBottom: '12px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                     <span style={{

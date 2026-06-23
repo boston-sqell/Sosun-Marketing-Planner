@@ -13,6 +13,7 @@ export interface UserItem {
   displayName: string;
   role: UserRole;
   email?: string; // email is optional
+  agencyName?: string; // set for agency-role users
 }
 
 export interface ChecklistItem {

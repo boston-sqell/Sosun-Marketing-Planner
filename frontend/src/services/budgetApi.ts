@@ -1,12 +1,8 @@
 import { auth } from '../firebase/config';
 import { appCheckHeader } from './appCheckHeader';
+import type { BudgetEntry } from '../types';
 
 const BACKEND = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
-
-export interface AppConfig {
-  brands: string[];
-  platforms: string[];
-}
 
 async function token(): Promise<string> {
   const t = await auth.currentUser?.getIdToken();
@@ -15,7 +11,7 @@ async function token(): Promise<string> {
 }
 
 async function call<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
-  const res = await fetch(`${BACKEND}/api/config${path}`, {
+  const res = await fetch(`${BACKEND}/api/budget${path}`, {
     ...init,
     headers: {
       'Content-Type': 'application/json',
@@ -31,13 +27,15 @@ async function call<T = unknown>(path: string, init: RequestInit = {}): Promise<
   return data as T;
 }
 
-export const configApi = {
-  /** Current brands/platforms (falls back to defaults server-side). */
-  get: () => call<{ config: AppConfig }>('/').then((r) => r.config),
-  /** Admin-only: persist brands/platforms to Firestore + mirror to the CONFIG sheet. */
-  save: (config: Partial<AppConfig>) =>
-    call<{ config: AppConfig; sheetSynced: boolean; sheetError?: string }>('/', {
-      method: 'PUT',
-      body: JSON.stringify(config),
-    }),
+export const budgetApi = {
+  list: (cursor?: string | null, campaignId?: string) => {
+    const params = new URLSearchParams();
+    if (cursor) params.set('cursor', cursor);
+    if (campaignId) params.set('campaignId', campaignId);
+    const qs = params.toString();
+    return call<{ entries: BudgetEntry[], nextCursor: string | null }>(`/${qs ? `?${qs}` : ''}`);
+  },
+  create: (data: Partial<BudgetEntry>) => call<{ id: string }>('/', { method: 'POST', body: JSON.stringify(data) }).then(r => r.id),
+  update: (id: string, data: Partial<BudgetEntry>) => call(`/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  delete: (id: string) => call(`/${id}`, { method: 'DELETE' }),
 };

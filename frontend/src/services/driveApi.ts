@@ -1,4 +1,5 @@
 import { auth } from '../firebase/config';
+import { appCheckHeader } from './appCheckHeader';
 import type { MediaAsset, WorkspaceConfig, DriveFolderRef, ActivityEntry, MediaMetrics, DriveRevision } from '../types';
 
 const BACKEND = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
@@ -9,12 +10,13 @@ async function token(): Promise<string> {
   return t;
 }
 
-async function api<T = any>(path: string, init: RequestInit = {}): Promise<T> {
+async function api<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(`${BACKEND}/api/drive${path}`, {
     ...init,
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${await token()}`,
+      ...(await appCheckHeader()),
       ...(init.headers || {}),
     },
   });
@@ -28,7 +30,7 @@ async function api<T = any>(path: string, init: RequestInit = {}): Promise<T> {
 /** Fetches an authed binary endpoint and returns an object URL (caller revokes). */
 export async function getBlobUrl(path: string): Promise<string> {
   const res = await fetch(`${BACKEND}/api/drive${path}`, {
-    headers: { Authorization: `Bearer ${await token()}` },
+    headers: { Authorization: `Bearer ${await token()}`, ...(await appCheckHeader()) },
   });
   if (!res.ok) throw new Error(`Failed to load (${res.status})`);
   return URL.createObjectURL(await res.blob());
@@ -107,7 +109,6 @@ async function uploadResumable(
     const blob = file.slice(start, end);
     let attempt = 0;
     // Retry just this chunk on transient failures.
-    // eslint-disable-next-line no-constant-condition
     while (true) {
       try {
         const r = await putChunk(blob, start, end);
@@ -154,22 +155,22 @@ export const driveApi = {
     }).then((r) => r.driveFolders),
 
   /* Browsing */
-  listFolder: (folderId: string) => api<{ files: any[] }>(`/folders/${folderId}/children`).then((r) => r.files),
+  listFolder: (folderId: string) => api<{ files: unknown[] }>(`/folders/${folderId}/children`).then((r) => r.files),
   createFolder: (name: string, parentId?: string) =>
     api('/folders', { method: 'POST', body: JSON.stringify({ name, parentId }) }),
 
   /* Assets */
-  listAssets: (filters: { campaignId?: string; fileType?: string; status?: string } = {}) => {
+  listAssets: (filters: { campaignId?: string; fileType?: string; status?: string; cursor?: string | null } = {}) => {
     const qs = new URLSearchParams(
       Object.entries(filters).filter(([, v]) => v) as [string, string][]
     ).toString();
-    return api<{ assets: MediaAsset[] }>(`/assets${qs ? `?${qs}` : ''}`).then((r) => r.assets);
+    return api<{ assets: MediaAsset[]; nextCursor: string | null }>(`/assets${qs ? `?${qs}` : ''}`);
   },
-  recordAsset: (body: Record<string, any>) =>
+  recordAsset: (body: Record<string, unknown>) =>
     api<{ asset: MediaAsset }>('/assets', { method: 'POST', body: JSON.stringify(body) }).then(
       (r) => r.asset
     ),
-  updateAsset: (id: string, patch: Record<string, any>) =>
+  updateAsset: (id: string, patch: Record<string, unknown>) =>
     api<{ asset: MediaAsset }>(`/assets/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }).then(
       (r) => r.asset
     ),

@@ -76,11 +76,11 @@ export const MediaLibrary: React.FC = () => {
     const u1 = onSnapshot(collection(db, 'tasks'), snap => {
       setTasks(snap.docs.map(d => ({ id: d.id, ...d.data() } as TaskData)));
       done();
-    }, err => { console.warn('tasks listener:', err.message); done(); });
+    }, err => { console.warn('tasks listener:', (err as Error).message); done(); });
     const u2 = onSnapshot(collection(db, 'campaigns'), snap => {
       setCampaigns(snap.docs.map(d => ({ id: d.id, ...d.data() } as CampaignData)));
       done();
-    }, err => { console.warn('campaigns listener:', err.message); done(); });
+    }, err => { console.warn('campaigns listener:', (err as Error).message); done(); });
     return () => { u1(); u2(); };
   }, []);
 

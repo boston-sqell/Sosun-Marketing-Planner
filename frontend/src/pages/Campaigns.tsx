@@ -2,13 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useBrandScope } from '../context/BrandScopeContext';
 import { triggerSheetsBackup } from '../services/syncApi';
-import { db } from '../firebase/config';
-import { collection, doc, setDoc, deleteDoc, updateDoc } from 'firebase/firestore';
+
 import { Plus, Trash2, Edit, X, Target } from 'lucide-react';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { toDisplayDate } from '../utils/dateUtils';
 import { driveApi } from '../services/driveApi';
-import { mockCampaigns } from '../mockData';
 import type { CampaignData, ChecklistItem } from '../types';
 import { campaignsApi } from '../services/campaignsApi';
 import { logActivity } from '../utils/activityLogger';
@@ -21,12 +19,8 @@ export const Campaigns: React.FC = () => {
 
   const [campaigns, setCampaigns] = useState<CampaignData[]>([]);
   const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  
-  // Pagination states
-  const [hasMore, setHasMore] = useState(false);
 
   // Form states
   const [name, setName] = useState('');
@@ -44,26 +38,17 @@ export const Campaigns: React.FC = () => {
   const [checklist, setChecklist] = useState<ChecklistItem[]>([]);
   const [newCheckItem, setNewCheckItem] = useState('');
 
-  const loadCampaigns = async (isLoadMore = false) => {
+  const loadCampaigns = async () => {
     try {
-      if (isLoadMore) {
-        setLoadingMore(true);
-      } else {
-        setLoading(true);
-      }
-
-      const list = await campaignsApi.list();
-      setCampaigns(list);
-      setHasMore(false);
+      setLoading(true);
+      // Load every page: stats and filtering happen client-side over the full list.
+      const res = await campaignsApi.listAll();
+      setCampaigns(res.campaigns);
     } catch (err) {
-      console.error('Error loading campaigns, using mock data:', err);
-      if (!isLoadMore) {
-        setCampaigns(mockCampaigns);
-        setHasMore(false);
-      }
+      console.error('Error loading campaigns:', err);
+      setCampaigns([]);
     } finally {
       setLoading(false);
-      setLoadingMore(false);
     }
   };
 
@@ -113,11 +98,8 @@ export const Campaigns: React.FC = () => {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Secure Firestore-generated ID if creating new campaign
-    const campaignId = editingId || doc(collection(db, 'campaigns')).id;
     
-    const data: CampaignData = {
-      id: campaignId,
+    const data: Partial<CampaignData> = {
       name,
       brand,
       type,
@@ -135,29 +117,25 @@ export const Campaigns: React.FC = () => {
     };
 
     try {
-      await setDoc(doc(db, 'campaigns', campaignId), data);
       if (editingId) {
-        setCampaigns(prev => prev.map(c => c.id === editingId ? data : c));
-        await logActivity(profile?.displayName || 'User', role, 'campaign', 'updated campaign', name, campaignId);
+        await campaignsApi.update(editingId, data);
+        setCampaigns(prev => prev.map(c => c.id === editingId ? { ...c, ...data } as CampaignData : c));
+        await logActivity(profile?.displayName || 'User', role, 'campaign', 'updated campaign', name, editingId);
       } else {
-        setCampaigns(prev => [data, ...prev]);
-        await logActivity(profile?.displayName || 'User', role, 'campaign', 'created campaign', name, campaignId);
+        const id = await campaignsApi.create(data);
+        const newCampaign = { ...data, id } as CampaignData;
+        setCampaigns(prev => [newCampaign, ...prev]);
+        await logActivity(profile?.displayName || 'User', role, 'campaign', 'created campaign', name, id);
+
+        // Auto-create the Google Drive folder structure for new campaigns.
+        driveApi.provisionCampaign(id).catch(err =>
+          console.warn('Campaign Drive folder provisioning skipped:', (err as Error).message)
+        );
       }
     } catch (err) {
-      console.error('Could not save campaign to Firestore, using state-only fallback:', err);
-      if (editingId) {
-        setCampaigns(prev => prev.map(c => c.id === editingId ? data : c));
-      } else {
-        setCampaigns(prev => [data, ...prev]);
-      }
-    }
-
-    // Auto-create the Google Drive folder structure for new campaigns.
-    // Best-effort: never block campaign creation if Drive isn't configured.
-    if (!editingId) {
-      driveApi.provisionCampaign(campaignId).catch(err =>
-        console.warn('Campaign Drive folder provisioning skipped:', err.message)
-      );
+      console.error('Could not save campaign:', err);
+      alert('Failed to save campaign. ' + (err as Error).message);
+      return; // Don't close modal on error
     }
 
     triggerSheetsBackup();
@@ -170,9 +148,11 @@ export const Campaigns: React.FC = () => {
       i.id === itemId ? { ...i, done: !i.done } : i);
     setCampaigns(prev => prev.map(c => c.id === campaign.id ? { ...c, checklist: updated } : c));
     try {
-      await updateDoc(doc(db, 'campaigns', campaign.id), { checklist: updated });
+      await campaignsApi.update(campaign.id, { checklist: updated });
     } catch (err) {
       console.error('Could not update checklist:', err);
+      // Revert optimistic update
+      setCampaigns(prev => prev.map(c => c.id === campaign.id ? { ...c, checklist: campaign.checklist } : c));
     }
   };
 
@@ -181,14 +161,14 @@ export const Campaigns: React.FC = () => {
     
     const campToDelete = campaigns.find(c => c.id === id);
     try {
-      await deleteDoc(doc(db, 'campaigns', id));
+      await campaignsApi.delete(id);
       setCampaigns(prev => prev.filter(c => c.id !== id));
       if (campToDelete) {
         await logActivity(profile?.displayName || 'User', role, 'campaign', 'deleted campaign', campToDelete.name, id);
       }
     } catch (err) {
       console.error('Could not delete campaign:', err);
-      setCampaigns(prev => prev.filter(c => c.id !== id));
+      alert('Failed to delete campaign. ' + (err as Error).message);
     }
   };
 
@@ -342,18 +322,6 @@ export const Campaigns: React.FC = () => {
               </div>
             ))}
           </div>
-
-          {hasMore && (
-            <div style={{ textAlign: 'center', marginTop: '24px' }}>
-              <button 
-                className="btn btn-secondary" 
-                onClick={() => loadCampaigns(true)}
-                disabled={loadingMore}
-              >
-                {loadingMore ? 'Loading...' : 'Load More Campaigns'}
-              </button>
-            </div>
-          )}
         </div>
       )}
 

@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  addDoc, collection, deleteDoc, doc, increment, onSnapshot, updateDoc,
+  collection, onSnapshot,
 } from 'firebase/firestore';
 import { Plus, X, Trash2, Wallet, Pencil } from 'lucide-react';
 import { db } from '../firebase/config';
+import { budgetApi } from '../services/budgetApi';
 import { useAuth } from '../context/AuthContext';
 import { useBrandScope } from '../context/BrandScopeContext';
 import { LoadingSpinner } from '../components/LoadingSpinner';
@@ -21,7 +22,7 @@ const CATEGORIES: BudgetCategory[] = [
  * rollup maintained with increment() on write/delete.
  */
 export const Budget: React.FC = () => {
-  const { role, profile } = useAuth();
+  const { role } = useAuth();
   const { brands, isInScope, colorOf } = useBrandScope();
   const canEdit   = role === 'admin' || role === 'internal';
   const canDelete = role === 'admin';
@@ -43,7 +44,7 @@ export const Budget: React.FC = () => {
     const u1 = onSnapshot(collection(db, 'budgetEntries'), snap => {
       setEntries(snap.docs.map(d => ({ id: d.id, ...d.data() } as BudgetEntry)));
       setLoading(false);
-    }, err => { console.warn('Ledger access denied:', err.message); setLoading(false); });
+    }, err => { console.warn('Ledger access denied:', (err as Error).message); setLoading(false); });
     const u2 = onSnapshot(collection(db, 'campaigns'), snap =>
       setCampaigns(snap.docs.map(d => ({ id: d.id, ...d.data() } as CampaignData))));
     const u3 = onSnapshot(collection(db, 'events'), snap =>
@@ -104,83 +105,40 @@ export const Budget: React.FC = () => {
     if (!form.description.trim()) { setError('Description is required.'); return; }
     if (!form.amount || form.amount <= 0) { setError('Amount must be positive.'); return; }
     try {
+      const payload = {
+        brand: form.brand,
+        campaignId: form.campaignId || null,
+        eventId: form.eventId || null,
+        category: form.category,
+        description: form.description.trim(),
+        notes: form.notes.trim() || undefined,
+        amount: form.amount,
+        currency: form.currency,
+        spentAt: form.spentAt,
+      };
+
       if (editingEntry) {
         // --- Update existing entry ---
-        await updateDoc(doc(db, 'budgetEntries', editingEntry.id), {
-          brand: form.brand,
-          campaignId: form.campaignId || null,
-          eventId: form.eventId || null,
-          category: form.category,
-          description: form.description.trim(),
-          notes: form.notes.trim() || null,
-          amount: form.amount,
-          currency: form.currency,
-          spentAt: form.spentAt,
-        });
-        // Reconcile denormalized budgetSpent on campaigns
-        const oldCid = editingEntry.campaignId;
-        const newCid = form.campaignId || null;
-        const oldAmt = editingEntry.amount || 0;
-        const newAmt = form.amount;
-        if (oldCid === newCid) {
-          // Same campaign – just apply the diff
-          if (oldCid && oldAmt !== newAmt) {
-            await updateDoc(doc(db, 'campaigns', oldCid), {
-              budgetSpent: increment(newAmt - oldAmt),
-            }).catch(() => {});
-          }
-        } else {
-          // Campaign changed – roll back old, apply new
-          if (oldCid) {
-            await updateDoc(doc(db, 'campaigns', oldCid), {
-              budgetSpent: increment(-oldAmt),
-            }).catch(() => {});
-          }
-          if (newCid) {
-            await updateDoc(doc(db, 'campaigns', newCid), {
-              budgetSpent: increment(newAmt),
-            }).catch(() => {});
-          }
-        }
+        await budgetApi.update(editingEntry.id, payload);
       } else {
         // --- Add new entry ---
-        await addDoc(collection(db, 'budgetEntries'), {
-          brand: form.brand,
-          campaignId: form.campaignId || null,
-          eventId: form.eventId || null,
-          category: form.category,
-          description: form.description.trim(),
-          notes: form.notes.trim() || null,
-          amount: form.amount,
-          currency: form.currency,
-          spentAt: form.spentAt,
-          enteredByUid: profile?.uid ?? null,
-          enteredBy: profile?.displayName ?? '',
-          createdAt: new Date().toISOString(),
-        });
-        // Denormalized rollup on the campaign
-        if (form.campaignId) {
-          await updateDoc(doc(db, 'campaigns', form.campaignId), {
-            budgetSpent: increment(form.amount),
-          });
-        }
+        await budgetApi.create(payload);
       }
       setModalOpen(false);
       setEditingEntry(null);
       setForm(blankForm());
       setError('');
-    } catch (e: any) {
-      setError(e.message || 'Save failed.');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Save failed.');
     }
   };
 
   const remove = async (e: BudgetEntry) => {
     if (!window.confirm(`Delete entry "${e.description}" (${e.amount})?`)) return;
-    await deleteDoc(doc(db, 'budgetEntries', e.id));
-    if (e.campaignId) {
-      await updateDoc(doc(db, 'campaigns', e.campaignId), {
-        budgetSpent: increment(-(e.amount || 0)),
-      }).catch(() => { /* campaign may have been deleted */ });
+    try {
+      await budgetApi.delete(e.id);
+    } catch (err) {
+      setError((err as Error).message || 'Delete failed.');
     }
   };
 

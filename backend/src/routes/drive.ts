@@ -746,13 +746,34 @@ router.delete('/assets/:id/share', requireRole('admin', 'internal'), async (req,
 // List indexed assets (filterable). Reads the Firestore index, not Drive.
 router.get('/assets', async (req, res, next) => {
   try {
-    const { campaignId, fileType, status } = req.query;
+    const { campaignId, fileType, status, cursor } = req.query;
     let qref: FirebaseFirestore.Query = MEDIA;
     if (campaignId) qref = qref.where('campaignId', '==', String(campaignId));
     if (fileType) qref = qref.where('fileType', '==', String(fileType));
     if (status) qref = qref.where('status', '==', String(status));
-    const snap = await qref.limit(500).get();
-    res.json({ success: true, assets: snap.docs.map((d) => d.data()) });
+    
+    // Sort needed for stable pagination
+    qref = qref.orderBy('uploadedAt', 'desc').orderBy('__name__', 'desc');
+
+    if (cursor) {
+      const cursorDoc = await MEDIA.doc(String(cursor)).get();
+      if (cursorDoc.exists) {
+        qref = qref.startAfter(cursorDoc);
+      }
+    }
+
+    const limitAmount = 50;
+    const snap = await qref.limit(limitAmount).get();
+    
+    let nextCursor: string | null = null;
+    if (snap.docs.length > 0) {
+      nextCursor = snap.docs[snap.docs.length - 1].id;
+    }
+    if (snap.docs.length < limitAmount) {
+      nextCursor = null;
+    }
+
+    res.json({ success: true, assets: snap.docs.map((d) => d.data()), nextCursor });
   } catch (e) {
     next(e);
   }

@@ -104,9 +104,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               });
             }
           }
-        } catch (err: any) {
+        } catch (err) {
           console.error('Error loading user profile:', err);
-          setError(`Could not fetch user profile details: ${err.message}`);
+          setError(`Could not fetch user profile details: ${(err as Error).message}`);
           
           const email = firebaseUser.email || '';
           setProfile({
@@ -156,8 +156,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!auth.currentUser) return;
     try {
       await sendEmailVerification(auth.currentUser, emailVerificationSettings);
-    } catch (err: any) {
-      setError(err.message || 'Could not resend verification email.');
+    } catch (err) {
+      setError((err as Error).message || 'Could not resend verification email.');
       throw err;
     }
   };
@@ -168,8 +168,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const result = await signInWithEmailAndPassword(auth, email, password);
       // Force token refresh to make sure we load the latest custom claims
       await result.user.getIdToken(true);
-    } catch (err: any) {
-      setError(err.message || 'Login failed. Please check your credentials.');
+    } catch (err) {
+      setError((err as Error).message || 'Login failed. Please check your credentials.');
       throw err;
     }
   };
@@ -178,8 +178,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setError(null);
     try {
       await signOut(auth);
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err) {
+      setError((err as Error).message);
       throw err;
     }
   };
@@ -236,8 +236,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await setDoc(userDocRef, userProfile, { merge: true });
 
       setProfile(userProfile);
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err) {
+      setError((err as Error).message);
       throw err;
     }
   };

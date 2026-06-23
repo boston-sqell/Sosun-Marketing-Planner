@@ -1,5 +1,7 @@
 import { Router, Response, NextFunction } from 'express';
 import { requireAuth, requireRole, AuthedRequest, AppRole } from '../middleware/auth';
+import { validate } from '../middleware/validate';
+import { CreateTaskSchema, UpdateTaskSchema, AddCommentSchema, EditCommentSchema } from '../schemas';
 import { db } from '../services/firestore';
 import { sendPushToRoles } from '../services/pushService';
 import { checkPermission, isProjectMember } from '../middleware/rbac';
@@ -108,18 +110,32 @@ router.get('/', async (req: AuthedRequest, res: Response, next) => {
     const filterBrandParam = req.query.brand as string;
     const filterPhaseParam = req.query.phase as string; // Feature 2: Calendar Pending Filter
 
-    // Fetch all tasks using Admin SDK
+    const limitAmount = 20;
+    const { cursor } = req.query;
+
+    // Fetch tasks using Admin SDK
     let queryRef: any = db.collection('tasks');
     if (filterBrandParam) {
       queryRef = queryRef.where('brand', '==', filterBrandParam);
     }
-    queryRef = queryRef.orderBy('createdAt', 'desc');
     
-    const tasksSnap = await queryRef.get();
+    // Primary DB sort is always createdAt desc to ensure stable cursor pagination
+    queryRef = queryRef.orderBy('createdAt', 'desc').orderBy('__name__', 'desc');
+    
+    if (cursor) {
+      const cursorDoc = await db.collection('tasks').doc(String(cursor)).get();
+      if (cursorDoc.exists) {
+        queryRef = queryRef.startAfter(cursorDoc);
+      }
+    }
+
+    const tasksSnap = await queryRef.limit(limitAmount).get();
     let tasksList: any[] = [];
+    let nextCursor: string | null = null;
 
     // Filter permitted tasks in memory to apply condition-aware RBAC
     for (const doc of tasksSnap.docs) {
+      nextCursor = doc.id;
       const task = { ...doc.data(), id: doc.id };
 
       const hasPerm = await checkPermission(role, 'task', 'view', {
@@ -136,6 +152,10 @@ router.get('/', async (req: AuthedRequest, res: Response, next) => {
         stripInternalComments(task, role);
         tasksList.push(task);
       }
+    }
+
+    if (tasksSnap.docs.length < limitAmount) {
+      nextCursor = null;
     }
 
     const terminalToBottom = req.query.terminalToBottom === 'true';
@@ -163,8 +183,10 @@ router.get('/', async (req: AuthedRequest, res: Response, next) => {
     // Optional cap on returned rows (?limit=N). Defaults to all for backward
     // compatibility. Avoids logging task titles/PII to stdout.
     const limitRaw = Number(req.query.limit);
-    const limited = Number.isInteger(limitRaw) && limitRaw > 0 ? tasksList.slice(0, limitRaw) : tasksList;
-    return res.json({ success: true, tasks: limited });
+    let limited = Number.isInteger(limitRaw) && limitRaw > 0 ? tasksList.slice(0, limitRaw) : tasksList;
+    if (direction === 'asc') limited.reverse();
+
+    return res.json({ success: true, tasks: limited, nextCursor });
   } catch (err: any) {
     next(err);
   }
@@ -205,7 +227,7 @@ router.get('/:id', async (req: AuthedRequest, res: Response, next) => {
 /**
  * POST /api/tasks
  */
-router.post('/', async (req: AuthedRequest, res: Response, next) => {
+router.post('/', validate(CreateTaskSchema), async (req: AuthedRequest, res: Response, next) => {
   try {
     const role = req.role || 'agency';
     const userUid = req.uid!;
@@ -246,7 +268,7 @@ router.post('/', async (req: AuthedRequest, res: Response, next) => {
 /**
  * PUT /api/tasks/:id
  */
-router.put('/:id', async (req: AuthedRequest, res: Response, next) => {
+router.put('/:id', validate(UpdateTaskSchema), async (req: AuthedRequest, res: Response, next) => {
   try {
     const { id } = req.params;
     const role = req.role || 'agency';
@@ -373,7 +395,7 @@ router.delete('/:id', async (req: AuthedRequest, res: Response, next) => {
 /**
  * POST /api/tasks/:id/comments
  */
-router.post('/:id/comments', async (req: AuthedRequest, res: Response, next) => {
+router.post('/:id/comments', validate(AddCommentSchema), async (req: AuthedRequest, res: Response, next) => {
   try {
     const { id } = req.params;
     const role = req.role || 'agency';
@@ -425,7 +447,7 @@ router.post('/:id/comments', async (req: AuthedRequest, res: Response, next) => 
 /**
  * PUT /api/tasks/:id/comments/:commentId
  */
-router.put('/:id/comments/:commentId', async (req: AuthedRequest, res: Response, next) => {
+router.put('/:id/comments/:commentId', validate(EditCommentSchema), async (req: AuthedRequest, res: Response, next) => {
   try {
     const { id, commentId } = req.params;
     const role = req.role || 'agency';

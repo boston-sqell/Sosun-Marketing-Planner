@@ -1,4 +1,5 @@
 import { auth } from '../firebase/config';
+import { appCheckHeader } from './appCheckHeader';
 
 const BACKEND = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
 
@@ -8,12 +9,13 @@ async function token(): Promise<string> {
   return t;
 }
 
-async function call<T = any>(path: string, init: RequestInit = {}): Promise<T> {
+async function call<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(`${BACKEND}/api/push${path}`, {
     ...init,
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${await token()}`,
+      ...(await appCheckHeader()),
       ...(init.headers || {}),
     },
   });

@@ -30,7 +30,7 @@ function detectPlatform(): 'ios' | 'android' | 'desktop' {
 /** iOS standalone detection (A2HS already done). */
 function isIOSStandalone(): boolean {
   return (
-    ('standalone' in navigator && (navigator as any).standalone === true) ||
+    ('standalone' in navigator && (navigator as Navigator & { standalone?: boolean }).standalone === true) ||
     window.matchMedia('(display-mode: standalone)').matches
   );
 }
@@ -39,6 +39,14 @@ function isIOSStandalone(): boolean {
 function isIOSSafari(): boolean {
   const ua = navigator.userAgent;
   return /iPad|iPhone|iPod/.test(ua) && !isIOSStandalone();
+}
+
+/** True if the soft prompt was dismissed within the backoff window. */
+function isDismissedRecently(): boolean {
+  const dismissed = localStorage.getItem(DISMISS_KEY);
+  if (!dismissed) return false;
+  const daysElapsed = (Date.now() - parseInt(dismissed, 10)) / (1000 * 60 * 60 * 24);
+  return daysElapsed < BACKOFF_DAYS;
 }
 
 // ── Context ─────────────────────────────────────────────────────────────────
@@ -141,14 +149,6 @@ export const PushNotificationProvider: React.FC<{ children: React.ReactNode }> =
     check();
   }, [user]);
 
-  // ── Dismiss check ──
-  function isDismissedRecently(): boolean {
-    const dismissed = localStorage.getItem(DISMISS_KEY);
-    if (!dismissed) return false;
-    const daysElapsed = (Date.now() - parseInt(dismissed, 10)) / (1000 * 60 * 60 * 24);
-    return daysElapsed < BACKOFF_DAYS;
-  }
-
   // ── Subscribe ──
   const subscribe = useCallback(async () => {
     setLoading(true);
@@ -183,9 +183,9 @@ export const PushNotificationProvider: React.FC<{ children: React.ReactNode }> =
       setIsSubscribed(true);
       setShowPrompt(false);
       localStorage.removeItem(DISMISS_KEY);
-    } catch (err: any) {
+    } catch (err) {
       console.error('Push subscribe failed:', err);
-      setError(err.message || 'Failed to enable notifications.');
+      setError((err as Error).message || 'Failed to enable notifications.');
     } finally {
       setLoading(false);
     }
@@ -207,9 +207,9 @@ export const PushNotificationProvider: React.FC<{ children: React.ReactNode }> =
       }
 
       setIsSubscribed(false);
-    } catch (err: any) {
+    } catch (err) {
       console.error('Push unsubscribe failed:', err);
-      setError(err.message || 'Failed to disable notifications.');
+      setError((err as Error).message || 'Failed to disable notifications.');
     } finally {
       setLoading(false);
     }

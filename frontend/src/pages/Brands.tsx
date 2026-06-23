@@ -73,8 +73,8 @@ export const Brands: React.FC = () => {
       }
       triggerSheetsBackup();
       setModalOpen(false);
-    } catch (e: any) {
-      setError(e.message || 'Save failed.');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Save failed.');
     } finally {
       setSaving(false);
     }

@@ -1,4 +1,5 @@
 import { auth } from '../firebase/config';
+import { appCheckHeader } from './appCheckHeader';
 
 const BACKEND = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
 
@@ -19,7 +20,7 @@ export async function runScanNow(backfillDays?: number): Promise<ScanSummary> {
   if (!t) throw new Error('Not authenticated.');
   const res = await fetch(`${BACKEND}/api/news/scan`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${t}` },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${t}`, ...(await appCheckHeader()) },
     body: JSON.stringify(backfillDays ? { backfillDays } : {}),
   });
   const data = await res.json().catch(() => ({}));

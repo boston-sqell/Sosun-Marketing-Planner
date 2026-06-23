@@ -5,7 +5,6 @@ import { collection, doc, getDocs, setDoc, deleteDoc } from 'firebase/firestore'
 import { ref, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
 import { Upload, FileText, Image, Video, File, Trash2, Link, Check, ExternalLink } from 'lucide-react';
 import { LoadingSpinner } from '../components/LoadingSpinner';
-import { mockAssets } from '../mockData';
 import type { FileAsset } from '../types';
 
 export const FileManager: React.FC = () => {
@@ -17,33 +16,28 @@ export const FileManager: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [selectedCampaign, setSelectedCampaign] = useState('');
-  const [campaigns, setCampaigns] = useState<any[]>([]);
+  const [campaigns, setCampaigns] = useState<{ id: string; name: string }[]>([]);
   const [filterType, setFilterType] = useState('All');
   
   // UI helper for copied links
   const [copiedId, setCopiedId] = useState<string | null>(null);
   
   // Ref to store the upload simulation interval to avoid memory leaks
-  const uploadIntervalRef = useRef<any>(null);
+  const uploadIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadAssets = async () => {
     try {
       setLoading(true);
       const snap = await getDocs(collection(db, 'assets'));
       const list = snap.docs.map(doc => ({ ...doc.data(), id: doc.id } as FileAsset));
-      
-      if (list.length === 0) {
-        setAssets(mockAssets);
-      } else {
-        setAssets(list);
-      }
+      setAssets(list);
 
       // Load campaigns for linking dropdown
       const campSnap = await getDocs(collection(db, 'campaigns'));
       setCampaigns(campSnap.docs.map(doc => ({ id: doc.id, name: doc.data().name })));
     } catch (err) {
-      console.error('Error loading assets, using mock data:', err);
-      setAssets(mockAssets);
+      console.error('Error loading assets:', err);
+      setAssets([]);
     } finally {
       setLoading(false);
     }
@@ -134,7 +128,7 @@ export const FileManager: React.FC = () => {
       },
       (error) => {
         console.error('Upload failed:', error);
-        alert('Upload failed: ' + error.message);
+        alert('Upload failed: ' + (error as Error).message);
         setUploadProgress(null);
       },
       async () => {

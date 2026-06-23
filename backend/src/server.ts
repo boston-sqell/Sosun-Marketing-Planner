@@ -12,6 +12,8 @@ import newsRouter from './routes/news';
 import pushRouter from './routes/push';
 import tasksRouter from './routes/tasks';
 import campaignsRouter from './routes/campaigns';
+import budgetRouter from './routes/budget';
+import eventsRouter from './routes/events';
 
 dotenv.config();
 
@@ -117,6 +119,8 @@ app.use('/api/news', newsRouter);
 app.use('/api/push', pushRouter);
 app.use('/api/tasks', tasksRouter);
 app.use('/api/campaigns', campaignsRouter);
+app.use('/api/budget', budgetRouter);
+app.use('/api/events', eventsRouter);
 
 // Basic health check route
 app.get('/health', (req, res) => {

@@ -180,8 +180,8 @@ export const Retail: React.FC = () => {
       }
       setActivityModal(false);
       setQuickName(''); setQuickRegion('');
-    } catch (e: any) {
-      setError(e.message || 'Save failed.');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Save failed.');
     }
   };
 

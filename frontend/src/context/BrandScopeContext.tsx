@@ -53,7 +53,7 @@ export const BrandScopeProvider: React.FC<{ children: ReactNode }> = ({ children
         unsubSnap = onSnapshot(
           query(collection(db, 'brands'), orderBy('name')),
           snap => setBrands(snap.docs.map(d => ({ id: d.id, ...d.data() } as Brand))),
-          err => console.warn('brands listener:', err.message),
+          err => console.warn('brands listener:', (err as Error).message),
         );
       } else {
         setBrands([]);

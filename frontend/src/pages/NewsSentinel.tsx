@@ -102,8 +102,8 @@ export const NewsSentinel: React.FC = () => {
           : 'Scan complete — no new mentions',
         s.written === 0,
       );
-    } catch (e: any) {
-      flash(e.message || 'Scan failed', true);
+    } catch (e) {
+      flash(e instanceof Error ? e.message : 'Scan failed', true);
     } finally {
       setScanning(false);
     }
@@ -159,8 +159,8 @@ export const NewsSentinel: React.FC = () => {
       await logActivity(profile?.displayName || 'User', role || 'internal', 'task', 'created task from news', mTitle, taskId);
       setModalFor(null);
       flash('Added to planner');
-    } catch (e: any) {
-      flash(e.message || 'Could not add task', true);
+    } catch (e) {
+      flash(e instanceof Error ? e.message : 'Could not add task', true);
     }
   };
 
@@ -210,7 +210,7 @@ export const NewsSentinel: React.FC = () => {
             <span key={k} className="news-kw">⚑ {k}</span>
           ))}
           {m.brands.map((b) => (
-            <span key={b} className="news-brand" style={{ ['--c' as any]: colorOf(b) }}>{b}</span>
+            <span key={b} className="news-brand" style={{ '--c': colorOf(b) } as React.CSSProperties}>{b}</span>
           ))}
           {sent && <span className={`news-sent ${sent.cls}`}>{sent.label}</span>}
         </div>

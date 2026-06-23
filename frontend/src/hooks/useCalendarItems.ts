@@ -50,16 +50,16 @@ export function useCalendarItems(windowStart: Date, windowEnd: Date) {
 
     if (role === 'agency' || role === 'external_agency') {
       // For agency roles, fetch once from the API since direct Firestore access is restricted
-      tasksApi.list().then(list => {
-        setTasks(list);
+      tasksApi.listAll().then(res => {
+        setTasks(res.tasks);
         done();
       }).catch(err => {
         console.error('Calendar tasks api fetch failed:', err);
         done();
       });
 
-      campaignsApi.list().then(list => {
-        setCampaigns(list);
+      campaignsApi.listAll().then(res => {
+        setCampaigns(res.campaigns);
         done();
       }).catch(err => {
         console.error('Calendar campaigns api fetch failed:', err);

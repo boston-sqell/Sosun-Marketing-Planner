@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  addDoc, collection, deleteDoc, doc, onSnapshot, query, updateDoc, where,
+  addDoc, collection, doc, onSnapshot, query, updateDoc, where,
 } from 'firebase/firestore';
 import {
   Plus, X, Tent, Trash2, ChevronDown, ChevronUp, CircleDollarSign,
 } from 'lucide-react';
 import { db } from '../firebase/config';
+import { eventsApi } from '../services/eventsApi';
 import { useAuth } from '../context/AuthContext';
 import { useBrandScope } from '../context/BrandScopeContext';
 import { LoadingSpinner } from '../components/LoadingSpinner';
@@ -114,7 +115,7 @@ const EventDetail: React.FC<{ event: EventData; canEdit: boolean; showBudget: bo
       return onSnapshot(
         query(collection(db, 'budgetEntries'), where('eventId', '==', event.id)),
         snap => setLedgerCost(snap.docs.reduce((s, d) => s + ((d.data() as BudgetEntry).amount || 0), 0)),
-        err => console.warn('Ledger listener denied:', err.message),
+        err => console.warn('Ledger listener denied:', (err as Error).message),
       );
     }, [event.id, showBudget]);
 
@@ -123,10 +124,10 @@ const EventDetail: React.FC<{ event: EventData; canEdit: boolean; showBudget: bo
     );
 
     const saveMetrics = () =>
-      updateDoc(doc(db, 'events', event.id), { ...metrics });
+      eventsApi.update(event.id, { ...metrics });
 
     const setStatus = (status: EventStatus) =>
-      updateDoc(doc(db, 'events', event.id), { status });
+      eventsApi.update(event.id, { status });
 
     return (
       <div style={{ borderTop: '1px solid var(--border)', marginTop: 12, paddingTop: 14 }}>
@@ -233,25 +234,26 @@ export const Events: React.FC = () => {
     if (!form.startDate || !form.endDate) { setError('Start and end dates are required.'); return; }
     if (form.brands.length === 0) { setError('Select at least one sponsoring brand.'); return; }
     try {
-      await addDoc(collection(db, 'events'), {
+      await eventsApi.create({
         ...form,
         name: form.name.trim(),
         status: 'Scoping',
-        leadsCaptured: 0,
-        salesAttributed: 0,
-        createdAt: new Date().toISOString(),
       });
       setModalOpen(false);
       setForm(emptyForm());
       setError('');
-    } catch (e: any) {
-      setError(e.message || 'Save failed.');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Save failed.');
     }
   };
 
   const remove = async (e: EventData) => {
     if (!window.confirm(`Delete event "${e.name}" and its packing/logistics data?`)) return;
-    await deleteDoc(doc(db, 'events', e.id));
+    try {
+      await eventsApi.delete(e.id);
+    } catch (err) {
+      setError((err as Error).message || 'Delete failed.');
+    }
   };
 
   if (loading) return <LoadingSpinner message="Loading events..." />;

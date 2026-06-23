@@ -246,8 +246,8 @@ export const Login: React.FC = () => {
       try {
         await sendPasswordResetEmail(auth, resolved);
         setResetSent(true);
-      } catch (err: any) {
-        setLocalError(err.message || 'Could not send reset email.');
+      } catch (err) {
+        setLocalError((err as Error).message || 'Could not send reset email.');
       }
     } else {
       setLocalError('Password reset is not available for internal accounts. Contact your administrator.');

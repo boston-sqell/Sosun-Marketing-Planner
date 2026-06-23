@@ -120,7 +120,7 @@ export const Reports: React.FC = () => {
         setReports(snap.docs.map(d => ({ id: d.id, ...d.data() } as ReportDoc)));
         setLoading(false);
       },
-      err => { console.warn('Reports access denied:', err.message); setLoading(false); }),
+      err => { console.warn('Reports access denied:', (err as Error).message); setLoading(false); }),
     []);
 
   const visible = useMemo(
@@ -141,10 +141,10 @@ export const Reports: React.FC = () => {
       });
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.error || `Failed (${res.status})`);
-      const ok = data.results.filter((r: any) => r.ok).length;
+      const ok = data.results.filter((r: { ok: boolean }) => r.ok).length;
       setMessage(`Generated ${ok}/${data.results.length} brand report(s) for ${data.period}.`);
-    } catch (e: any) {
-      setMessage(`Generation failed: ${e.message}`);
+    } catch (e) {
+      setMessage(`Generation failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setRunning(false);
     }

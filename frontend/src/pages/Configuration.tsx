@@ -8,7 +8,7 @@ import { driveApi } from '../services/driveApi';
 import { configApi } from '../services/configApi';
 import { pushApi } from '../services/pushApi';
 import type { PushStats, BroadcastPayload } from '../services/pushApi';
-import { mockUsers } from '../mockData';
+import { bulkImportFromSheets } from '../services/syncApi';
 import type { UserRole, UserItem, WorkspaceConfig } from '../types';
 
 export const Configuration: React.FC = () => {
@@ -70,14 +70,10 @@ export const Configuration: React.FC = () => {
       setLoading(true);
       const snap = await getDocs(collection(db, 'users'));
       const list = snap.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserItem));
-      if (list.length === 0) {
-        setUsers(mockUsers);
-      } else {
-        setUsers(list);
-      }
+      setUsers(list);
     } catch (err) {
-      console.error('Error loading config data, using mock fallback settings:', err);
-      setUsers(mockUsers);
+      console.error('Error loading user directory:', err);
+      setUsers([]);
     } finally {
       setLoading(false);
     }
@@ -117,8 +113,8 @@ export const Configuration: React.FC = () => {
       const ws = await driveApi.createWorkspace('Marketing Assets');
       setWorkspace(ws);
       setWsMessage(`Created "${ws.rootFolderName}" in your Google Drive. Now create the folder structure.`);
-    } catch (err: any) {
-      setWsMessage(err.message || 'Could not create workspace.');
+    } catch (err) {
+      setWsMessage((err as Error).message || 'Could not create workspace.');
     } finally {
       setSavingWs(false);
     }
@@ -131,8 +127,8 @@ export const Configuration: React.FC = () => {
       const ws = await driveApi.provisionWorkspace();
       setWorkspace(ws);
       setWsMessage(`Folder structure ready: ${Object.keys(ws.topLevelFolderIds).join(', ')}.`);
-    } catch (err: any) {
-      setWsMessage(err.message || 'Could not create folder structure.');
+    } catch (err) {
+      setWsMessage((err as Error).message || 'Could not create folder structure.');
     } finally {
       setProvisioning(false);
     }
@@ -162,9 +158,9 @@ export const Configuration: React.FC = () => {
       }
 
       setUsers(prev => prev.map(u => u.uid === userId ? { ...u, role: newRole } : u));
-    } catch (err: any) {
+    } catch (err) {
       console.error('Could not update user role:', err);
-      alert('Could not update role: ' + err.message);
+      alert('Could not update role: ' + (err as Error).message);
     }
   };
 
@@ -183,16 +179,16 @@ export const Configuration: React.FC = () => {
         throw new Error(data.error || 'Server error deleting user');
       }
       setUsers(prev => prev.filter(x => x.uid !== u.uid));
-    } catch (err: any) {
+    } catch (err) {
       console.error('Could not delete user:', err);
-      alert('Could not delete user: ' + err.message);
+      alert('Could not delete user: ' + (err as Error).message);
     }
   };
 
-  const startEdit = (u: UserItem & { agencyName?: string }) => {
+  const startEdit = (u: UserItem) => {
     setEditingUid(u.uid);
     setEditName(u.displayName);
-    setEditAgency((u as any).agencyName || '');
+    setEditAgency(u.agencyName || '');
   };
 
   const cancelEdit = () => {
@@ -211,12 +207,12 @@ export const Configuration: React.FC = () => {
       await updateDoc(doc(db, 'users', uid), patch);
 
       setUsers(prev => prev.map(u =>
-        u.uid === uid ? { ...u, displayName: patch.displayName, agencyName: patch.agencyName } as any : u
+        u.uid === uid ? { ...u, displayName: patch.displayName, agencyName: patch.agencyName } : u
       ));
       cancelEdit();
-    } catch (err: any) {
+    } catch (err) {
       console.error('Could not update user profile:', err);
-      alert('Could not save changes: ' + err.message);
+      alert('Could not save changes: ' + (err as Error).message);
     } finally {
       setSavingEdit(false);
     }
@@ -249,13 +245,13 @@ export const Configuration: React.FC = () => {
         displayName: newUser.displayName.trim(),
         role: newUser.role,
         ...(newUser.agencyName.trim() ? { agencyName: newUser.agencyName.trim() } : {}),
-      } as any]);
+      }]);
 
       setCreateMsg({ ok: true, text: `Account created for ${newUser.displayName.trim()}. Share their password with them directly.` });
       setNewUser({ displayName: '', password: '', role: 'agency', agencyName: '' });
       setShowCreateForm(false);
-    } catch (err: any) {
-      setCreateMsg({ ok: false, text: err.message || 'Could not create user.' });
+    } catch (err) {
+      setCreateMsg({ ok: false, text: (err as Error).message || 'Could not create user.' });
     } finally {
       setCreatingUser(false);
     }
@@ -272,9 +268,9 @@ export const Configuration: React.FC = () => {
       setBrands(r.config.brands);
       setPlatforms(r.config.platforms);
       if (r.sheetError) setConfigMsg(`Saved. (Google Sheet sync warning: ${r.sheetError})`);
-    } catch (err: any) {
+    } catch (err) {
       revert();
-      setConfigMsg(err.message || 'Could not save changes.');
+      setConfigMsg((err as Error).message || 'Could not save changes.');
     } finally {
       setSavingConfig(false);
     }
@@ -337,9 +333,9 @@ export const Configuration: React.FC = () => {
       } else {
         throw new Error(data.error || 'Server returned an error');
       }
-    } catch (err: any) {
+    } catch (err) {
       console.error('Sheets sync failed:', err);
-      setSyncStatus({ success: false, message: err.message || 'Connection failed', time: syncStatus.time });
+      setSyncStatus({ success: false, message: (err as Error).message || 'Connection failed', time: syncStatus.time });
     } finally {
       setSyncing(false);
     }
@@ -351,21 +347,11 @@ export const Configuration: React.FC = () => {
     setImportResult('Importing data from Google Sheets...');
 
     try {
-      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
-      const response = await fetch(`${backendUrl}/api/sync/import`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      });
-      
-      const data = await response.json();
-      if (response.ok && data.success) {
-        setImportResult(`Successfully imported ${data.campaignsImported} campaigns and ${data.postsImported} tasks!`);
-      } else {
-        throw new Error(data.error || 'Server error during import');
-      }
-    } catch (err: any) {
+      const data = await bulkImportFromSheets();
+      setImportResult(`Successfully imported ${data.campaignsImported} campaigns and ${data.postsImported} tasks!`);
+    } catch (err) {
       console.error('Import failed:', err);
-      setImportResult(`Import failed: ${err.message || 'Could not connect to Cloud Run API'}`);
+      setImportResult(`Import failed: ${(err as Error).message || 'Could not connect to Cloud Run API'}`);
     } finally {
       setImporting(false);
     }
@@ -653,8 +639,8 @@ export const Configuration: React.FC = () => {
                     setPushUrl('');
                     // Refresh stats
                     pushApi.getStats().then(setPushStats).catch(() => {});
-                  } catch (err: any) {
-                    setPushResult({ ok: false, text: err.message || 'Broadcast failed.' });
+                  } catch (err) {
+                    setPushResult({ ok: false, text: (err as Error).message || 'Broadcast failed.' });
                   } finally {
                     setBroadcasting(false);
                   }
@@ -674,8 +660,8 @@ export const Configuration: React.FC = () => {
                   try {
                     await pushApi.testPush();
                     setPushResult({ ok: true, text: 'Test notification sent to your devices.' });
-                  } catch (err: any) {
-                    setPushResult({ ok: false, text: err.message || 'Test failed.' });
+                  } catch (err) {
+                    setPushResult({ ok: false, text: (err as Error).message || 'Test failed.' });
                   } finally {
                     setTestingSend(false);
                   }
@@ -822,9 +808,9 @@ export const Configuration: React.FC = () => {
                     <div>
                       <strong style={{ fontSize: '14px', display: 'block' }}>{u.displayName}</strong>
                       <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{u.email}</span>
-                      {(u as any).agencyName && (
+                      {u.agencyName && (
                         <span style={{ fontSize: '11px', color: 'var(--text-light)', display: 'block', marginTop: '2px' }}>
-                          {(u as any).agencyName}
+                          {u.agencyName}
                         </span>
                       )}
                     </div>
@@ -848,7 +834,7 @@ export const Configuration: React.FC = () => {
                         <button
                           className="btn-icon"
                           title="Edit display name / agency"
-                          onClick={() => startEdit(u as any)}
+                          onClick={() => startEdit(u)}
                         >
                           <Pencil size={14} style={{ color: 'var(--primary)' }} />
                         </button>

@@ -346,7 +346,7 @@ export const CalendarView: React.FC = () => {
                       const color = colorOf(item.brands[0]);
                       const Icon  = KIND_ICON[item.kind];
                       const task  = item.kind === 'task' ? (item.raw as TaskData) : null;
-                      const meeting = item.kind === 'meeting' ? (item.raw as any) : null;
+                      const meeting = item.kind === 'meeting' ? (item.raw as TaskData) : null;
                       return (
                         <div
                           key={`${item.kind}-${item.id}`}

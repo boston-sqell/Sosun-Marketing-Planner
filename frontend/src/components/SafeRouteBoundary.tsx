@@ -13,7 +13,7 @@ interface State {
 export class SafeRouteBoundary extends Component<Props, State> {
   public state: State = { hasError: false };
 
-  public static getDerivedStateFromError(_: Error): State {
+  public static getDerivedStateFromError(): State {
     return { hasError: true };
   }
 
@@ -23,8 +23,8 @@ export class SafeRouteBoundary extends Component<Props, State> {
     // Auto-reload to fetch the new version index if a chunk fails to load
     const isChunkError =
       error.name === 'ChunkLoadError' ||
-      /failed to fetch/i.test(error.message) ||
-      /dynamically imported module/i.test(error.message);
+      /failed to fetch/i.test((error as Error).message) ||
+      /dynamically imported module/i.test((error as Error).message);
 
     if (isChunkError) {
       window.location.reload();
