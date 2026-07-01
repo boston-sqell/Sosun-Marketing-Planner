@@ -43,9 +43,25 @@ export async function requireAuth(req: AuthedRequest, res: Response, next: NextF
   const token = header.split('Bearer ')[1];
   try {
     const decoded = await auth.verifyIdToken(token);
+    const role = decoded.role as AppRole | undefined;
+    // A valid ID token with NO role claim means this Firebase Auth account was
+    // never provisioned by an admin — every account created via
+    // POST /api/users/create gets its custom claim set atomically at creation
+    // time (see routes/users.ts). The only way to reach this state is a
+    // Firebase Auth account created outside the app (e.g. self-serve
+    // Email/Password sign-up hit directly, bypassing the UI). Previously this
+    // fell back to 'agency', silently granting API access to any such
+    // account. Reject instead — fail closed rather than least-privilege
+    // default. See CODE_AUDIT_2026-07-01.md (H6 residual gap).
+    if (!role) {
+      return res.status(403).json({
+        success: false,
+        error: 'Account not provisioned. Contact your administrator.',
+      });
+    }
     req.uid = decoded.uid;
     req.email = decoded.email;
-    req.role = (decoded.role as AppRole) || 'agency'; // Least-privilege default
+    req.role = role;
     next();
   } catch (err: any) {
     console.error('Auth verification failed:', err.message);
