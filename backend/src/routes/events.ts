@@ -122,11 +122,10 @@ router.delete('/:id', async (req: AuthedRequest, res: Response, next) => {
     }
 
     const docRef = db.collection('events').doc(id);
-    await docRef.delete();
-    
-    // Cleanup logistics subcollection? That usually requires a Cloud Function
-    // or recursive delete, but for this app deleting the main doc is enough 
-    // to hide it from the UI.
+    // recursiveDelete removes the doc AND its packingItems/logistics
+    // subcollections — a plain doc.delete() leaves those orphaned in
+    // Firestore forever (subcollections don't cascade-delete).
+    await db.recursiveDelete(docRef);
 
     return res.json({ success: true });
   } catch (err: any) {

@@ -1,20 +1,29 @@
-import { Router } from 'express';
+import { Router, Response } from 'express';
+import { requireAuth, requireRole, AuthedRequest } from '../middleware/auth';
 import { auth, db } from '../services/firestore';
 
 const router = Router();
 
 const VALID_ROLES = ['admin', 'internal', 'agency', 'external_agency', 'media', 'sponsor', 'supplier'];
 
-async function verifyToken(authHeader: string | undefined) {
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    throw Object.assign(new Error('Unauthorized'), { status: 401 });
-  }
-  return auth.verifyIdToken(authHeader.split('Bearer ')[1]);
-}
+// Every route below now goes through the same requireAuth middleware as the
+// rest of the API (verifies the Firebase ID token AND, in production, the
+// Firebase App Check token) instead of a bespoke local verifier. Account
+// provisioning is the most sensitive surface in the app; it should not be the
+// one place that skips App Check.
+router.use(requireAuth);
 
-router.post('/set-role', async (req, res) => {
+/**
+ * POST /api/users/set-role
+ * Admin-only. Role assignment is no longer self-service for ANY role
+ * (including 'agency') — every account is created through POST /api/users/create
+ * by an admin, which sets the role atomically at creation time. Allowing a
+ * caller to self-assign 'agency' was an open self-registration path: any
+ * Firebase Auth account (however it was created) could grant itself API access
+ * the moment it hit this endpoint. See CODE_AUDIT_2026-07-01.md (H6).
+ */
+router.post('/set-role', requireRole('admin'), async (req: AuthedRequest, res: Response) => {
   try {
-    const decoded = await verifyToken(req.headers.authorization);
     const { uid, role } = req.body;
 
     if (!uid || !role) {
@@ -27,17 +36,6 @@ router.post('/set-role', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Invalid uid format' });
     }
 
-    const isSelf = decoded.uid === uid;
-    const isAdmin = decoded.role === 'admin';
-
-    if (!isSelf && !isAdmin) {
-      return res.status(403).json({ success: false, error: 'Forbidden' });
-    }
-    if (isSelf && !isAdmin && role !== 'agency') {
-      return res.status(403).json({ success: false, error: 'Forbidden: self-registration may only set role to agency' });
-    }
-
-
     await auth.setCustomUserClaims(uid, { role });
     await db.collection('users').doc(uid).set({ role }, { merge: true });
 
@@ -48,13 +46,14 @@ router.post('/set-role', async (req, res) => {
   }
 });
 
-router.post('/create', async (req, res) => {
+/**
+ * POST /api/users/create
+ * Admin-only. Creates the Firebase Auth user AND the Firestore profile AND the
+ * custom claim in one call, so there is never a window where an authenticated
+ * user exists without a provisioned role.
+ */
+router.post('/create', requireRole('admin'), async (req: AuthedRequest, res: Response) => {
   try {
-    const decoded = await verifyToken(req.headers.authorization);
-    if (decoded.role !== 'admin') {
-      return res.status(403).json({ success: false, error: 'Forbidden: admin only' });
-    }
-
     const { email: rawEmail, password, displayName, role, agencyName } = req.body;
 
     if (!password || !displayName || !role) {
@@ -98,18 +97,18 @@ router.post('/create', async (req, res) => {
   }
 });
 
-router.delete('/:uid', async (req, res) => {
+/**
+ * DELETE /api/users/:uid
+ * Admin-only. An admin cannot delete their own account (avoids accidental
+ * self-lockout with no other admin present).
+ */
+router.delete('/:uid', requireRole('admin'), async (req: AuthedRequest, res: Response) => {
   try {
-    const decoded = await verifyToken(req.headers.authorization);
-    if (decoded.role !== 'admin') {
-      return res.status(403).json({ success: false, error: 'Forbidden: admin only' });
-    }
-
     const { uid } = req.params;
     if (!uid) {
       return res.status(400).json({ success: false, error: 'Missing uid' });
     }
-    if (uid === decoded.uid) {
+    if (uid === req.uid) {
       return res.status(400).json({ success: false, error: 'You cannot delete your own account' });
     }
 
@@ -125,11 +124,14 @@ router.delete('/:uid', async (req, res) => {
   }
 });
 
-router.get('/roles', async (req, res) => {
+/**
+ * GET /api/users/roles
+ * Any authenticated user may read the static permissions manifest (no
+ * sensitive data — describes what the external_agency role can do). Not
+ * currently called from the frontend, kept for parity with the API surface.
+ */
+router.get('/roles', async (_req: AuthedRequest, res: Response) => {
   try {
-    // Authenticate the user
-    await verifyToken(req.headers.authorization);
-
     const manifest = {
       external_agency: {
         campaigns: {

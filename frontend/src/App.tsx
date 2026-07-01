@@ -30,7 +30,7 @@ const NewsSentinel = lazy(() => import('./pages/NewsSentinel').then(m => ({ defa
 // ─────────────────────────────────────────────────────────────────────────────
 
 const AppContent: React.FC = () => {
-  const { user, profile, loading } = useAuth();
+  const { user, profile, loading, unprovisioned, logout } = useAuth();
   const location = useLocation();
   // Agency partners must never reach financial views (rules also deny the data server-side)
   const isAgency = profile?.role === 'agency';
@@ -47,6 +47,30 @@ const AppContent: React.FC = () => {
   // Email verification gate removed — access is controlled entirely by role.
   // All account creation goes through the admin panel (Configuration page),
   // so there is no open public registration to exploit.
+
+  // This account authenticated successfully but has no Firestore profile/role.
+  // That should never happen for an admin-created account — surface it clearly
+  // instead of silently proceeding with a null role (which would previously
+  // have auto-provisioned this account as 'agency').
+  if (unprovisioned) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', padding: '2rem' }}>
+        <div style={{ maxWidth: 440, textAlign: 'center', background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 12, padding: '2.5rem 2rem' }}>
+          <h3 style={{ marginBottom: '0.75rem' }}>Account not set up</h3>
+          <p style={{ color: 'var(--text-muted)', fontSize: 14, marginBottom: '1.5rem' }}>
+            Your login succeeded, but no role has been provisioned for this account yet.
+            Contact your administrator to have your access set up.
+          </p>
+          <button
+            onClick={() => logout()}
+            style={{ background: 'var(--primary)', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: 8, fontWeight: 600, cursor: 'pointer' }}
+          >
+            Sign out
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const getPageInfo = () => {
     const path = location.pathname;

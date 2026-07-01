@@ -31,6 +31,19 @@ if (!process.env.CRON_SECRET) {
 if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) {
   console.warn('WARNING: VAPID keys are not set — Web Push notifications are disabled.');
 }
+// requireAuth (middleware/auth.ts) only rejects requests missing an App Check
+// token when NODE_ENV === 'production'. Any other value (unset, a typo, a
+// staging label) silently disables that check with no signal at request time.
+// Surface it loudly at boot instead, since this is easy to miss in a Cloud Run
+// deploy that forgets --update-env-vars NODE_ENV=production.
+if (process.env.NODE_ENV !== 'production') {
+  console.warn(
+    `WARNING: NODE_ENV is "${process.env.NODE_ENV || '(unset)'}", not "production" — ` +
+    'Firebase App Check enforcement is DISABLED for clients that omit the X-Firebase-AppCheck ' +
+    'header. This is expected in local dev; if you see this in a deployed environment, App Check ' +
+    'is not being enforced.'
+  );
+}
 
 // ── App setup ───────────────────────────────────────────────────────────────
 const app = express();
@@ -74,7 +87,7 @@ app.use(
       callback(null, false);
     },
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Cron-Secret'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Cron-Secret', 'X-Firebase-AppCheck'],
     credentials: true,
   })
 );

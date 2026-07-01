@@ -9,6 +9,7 @@ import { configApi } from '../services/configApi';
 import { pushApi } from '../services/pushApi';
 import type { PushStats, BroadcastPayload } from '../services/pushApi';
 import { bulkImportFromSheets } from '../services/syncApi';
+import { appCheckHeader } from '../services/appCheckHeader';
 import type { UserRole, UserItem, WorkspaceConfig } from '../types';
 
 export const Configuration: React.FC = () => {
@@ -148,7 +149,8 @@ export const Configuration: React.FC = () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${idToken}`
+          'Authorization': `Bearer ${idToken}`,
+          ...(await appCheckHeader()),
         },
         body: JSON.stringify({ uid: userId, role: newRole })
       });
@@ -172,7 +174,7 @@ export const Configuration: React.FC = () => {
       const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
       const response = await fetch(`${backendUrl}/api/users/${u.uid}`, {
         method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${idToken}` }
+        headers: { 'Authorization': `Bearer ${idToken}`, ...(await appCheckHeader()) }
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || data.success === false) {
@@ -234,7 +236,11 @@ export const Configuration: React.FC = () => {
 
       const res = await fetch(`${backendUrl}/api/users/create`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${idToken}` },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`,
+          ...(await appCheckHeader()),
+        },
         body: JSON.stringify(body),
       });
       const data = await res.json();
@@ -889,7 +895,7 @@ export const Configuration: React.FC = () => {
                           {savingEdit ? <RefreshCw size={14} className="spinning-anim" /> : <Save size={14} />}
                           Save
                         </button>
-                      </div>
+                         </div>
                     </div>
                   )}
                 </div>
