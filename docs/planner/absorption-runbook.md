@@ -20,8 +20,9 @@ Legacy `task.status` holds display names ("In Progress"); the engine treats `sta
    ⚠ Never deploy the flipped backend before step 3 — the planner routes would serve legacy docs with no `workflowId` and transitions would 400. (Remember the inventory-app incident: stale deployed code + new data model = wipe. Same class of hazard.)
 5. **Deploy rules:** `firebase deploy --only firestore:rules`
    `workItems` is now deny-all (retired); `tasks` gains the planner subcollection rules (`activity`/`attachments`/`comments`, client-read-only).
-6. **Smoke test:** legacy Tasks page lists as before (planner-native items filtered by `typeId` guard); planner List/Kanban now shows absorbed tasks under `wf_task`; a `move-to-*` transition on a legacy task writes an audit entry under `tasks/{id}/activity`.
-7. Optional cleanup after a comfortable soak: `npx ts-node scripts/migrate-to-workitems.ts --delete-workitems` removes the retired `workItems` sources.
+6. **Deploy hosting** (the planner UI has never shipped — it exists only on this branch): `deploy.bat` (builds frontend + deploys hosting/rules/indexes), then **hard-refresh (Ctrl+Shift+R)** — the PWA service worker serves the stale bundle otherwise.
+7. **Smoke test:** legacy Tasks page lists as before (planner-native items filtered by `typeId` guard); planner List/Kanban now shows absorbed tasks under `wf_task`; a `move-to-*` transition on a legacy task writes an audit entry under `tasks/{id}/activity`.
+8. Optional cleanup after a comfortable soak: `npx ts-node scripts/migrate-to-workitems.ts --delete-workitems` removes the retired `workItems` sources.
 
 ## What coexists during the transition
 
