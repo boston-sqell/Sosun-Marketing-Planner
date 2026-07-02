@@ -22,13 +22,15 @@ service cloud.firestore {
         getRole() == 'internal'
       );
       // A user may write their own profile, but an UPDATE may never change the
-      // role field (the authoritative authz claim is managed by the backend;
-      // only an admin may change a role). Admins may write any user doc.
+      // `role` claim NOR the `plannerRole` capability field (both are authz
+      // fields managed by the backend; only an admin may change them —
+      // otherwise a user could self-grant planner permissions). Admins may
+      // write any user doc.
       allow write: if isAuth() && (
         getRole() == 'admin' ||
         (request.auth.uid == userId && (
           resource == null ||
-          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role'])
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'plannerRole'])
         ))
       );
     }
@@ -174,6 +176,58 @@ service cloud.firestore {
       allow create: if isAuth() && request.resource.data.uid == request.auth.uid;
       allow update: if isAuth() && resource.data.uid == request.auth.uid;
       allow delete: if isAuth() && resource.data.uid == request.auth.uid;
+    }
+
+    // ── Marketing Planner ────────────────────────────────────────────────────
+    // All planner access is server-mediated through the Admin SDK (Admin SDK
+    // bypasses these rules). Client writes are denied everywhere; the workflow
+    // engine, permission checks and audit writes all run server-side. See
+    // docs/planner/spec-revisions.md §14.4.
+
+    // Work items — staff may read directly; agency/external_agency go through
+    // the API (which applies planner-role scoping and field stripping). No
+    // client writes: status changes ONLY via the transition endpoint.
+    match /workItems/{itemId} {
+      allow read: if isAuth() && getRole() != 'agency' && getRole() != 'external_agency';
+      allow write: if false;
+
+      // Immutable audit trail (spec §11) — written exclusively by the Admin SDK
+      // inside the transition transaction. Never client-writable.
+      match /activity/{entryId} {
+        allow read: if isAuth() && getRole() != 'agency' && getRole() != 'external_agency';
+        allow write: if false;
+      }
+
+      // Storage-backed attachment index (created via the API).
+      match /attachments/{attId} {
+        allow read: if isAuth() && getRole() != 'agency' && getRole() != 'external_agency';
+        allow write: if false;
+      }
+
+      // Threaded comments (created via the API, which strips internal-only).
+      match /comments/{commentId} {
+        allow read: if isAuth() && getRole() != 'agency' && getRole() != 'external_agency';
+        allow write: if false;
+      }
+    }
+
+    // Engine config — readable by any authenticated staff member so the UI can
+    // render workflows/types/fields; only the backend (Admin SDK) writes it.
+    match /workflows/{workflowId} {
+      allow read: if isAuth();
+      allow write: if false;
+    }
+    match /workItemTypes/{typeId} {
+      allow read: if isAuth();
+      allow write: if false;
+    }
+    match /customFields/{fieldId} {
+      allow read: if isAuth();
+      allow write: if false;
+    }
+    match /plannerConfig/{docId} {
+      allow read: if isAuth();
+      allow write: if false;
     }
   }
 }
