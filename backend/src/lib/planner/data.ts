@@ -145,13 +145,19 @@ export async function listItems(
     if (filter.brandId && !(item.brandIds ?? []).includes(filter.brandId)) continue;
     
     if (filter.forAgency) {
+      const raw = item as unknown as Record<string, unknown>;
+      // Legacy tasks store assignedTo/visibility at the top level of the doc.
+      // New planner-native items use the fields:{} bag. Check both.
+      const assignedTo = (raw.assignedTo ?? item.fields?.assignedTo) as string | undefined;
+      const visibility = (raw.visibility ?? item.fields?.visibility) as string | undefined;
+
       const isCampaign = item.typeId === 'campaign';
-      const isAgencyMeeting = item.typeId === 'meeting' && (item.fields?.visibility === 'agency' || item.fields?.visibility === 'external');
+      const isAgencyMeeting = item.typeId === 'meeting' && (
+        visibility === 'agency' || visibility === 'external'
+      );
       const isAgencyTask = item.typeId === 'task' && (
-        item.fields?.assignedTo === 'Agency' || 
-        item.fields?.assignedTo === 'Both' || 
-        item.fields?.visibility === 'agency' || 
-        item.fields?.visibility === 'both'
+        assignedTo === 'Agency' || assignedTo === 'Both' ||
+        visibility === 'agency' || visibility === 'both'
       );
       if (!isCampaign && !isAgencyMeeting && !isAgencyTask) continue;
       
@@ -214,7 +220,9 @@ export async function getMyWork(
   const assigned = assignedSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<WorkItem, 'id'>) }));
   
   if (roles.includes('agency') || roles.includes('external_agency')) {
-    const legacyAssignedSnap = await db.collection(WORK_ITEMS_COLLECTION).where('fields.assignedTo', 'in', ['Agency', 'Both']).limit(100).get();
+    // Legacy tasks have assignedTo at the TOP LEVEL of the Firestore doc, not
+    // inside fields:{} — the migration left the original field in place.
+    const legacyAssignedSnap = await db.collection(WORK_ITEMS_COLLECTION).where('assignedTo', 'in', ['Agency', 'Both']).limit(100).get();
     for (const d of legacyAssignedSnap.docs) {
       if (!assigned.some(a => a.id === d.id)) {
         assigned.push({ id: d.id, ...(d.data() as Omit<WorkItem, 'id'>) });

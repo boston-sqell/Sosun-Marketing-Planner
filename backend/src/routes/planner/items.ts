@@ -56,10 +56,13 @@ const isAgency = (role?: AppRole) => !!role && AGENCY_ROLES.includes(role);
 function agencyCanAccess(item: { typeId?: string; fields?: Record<string, unknown>; assigneeUids?: string[] }, uid: string): boolean {
   // Campaigns are always visible to agency.
   if (item.typeId === 'campaign') return true;
-  // Legacy tasks/meetings use the assignedTo/visibility fields.
-  const f = item.fields ?? {};
-  if (f.assignedTo === 'Agency' || f.assignedTo === 'Both') return true;
-  if (f.visibility === 'agency' || f.visibility === 'external' || f.visibility === 'both') return true;
+  // Legacy tasks/meetings: assignedTo and visibility can be at the TOP LEVEL
+  // of the Firestore doc (not inside fields:{}) — check both locations.
+  const raw = item as unknown as Record<string, unknown>;
+  const assignedTo = (raw.assignedTo ?? item.fields?.assignedTo) as string | undefined;
+  const visibility = (raw.visibility ?? item.fields?.visibility) as string | undefined;
+  if (assignedTo === 'Agency' || assignedTo === 'Both') return true;
+  if (visibility === 'agency' || visibility === 'external' || visibility === 'both') return true;
   // Planner-native items: use assigneeUids.
   return (item.assigneeUids ?? []).includes(uid);
 }
