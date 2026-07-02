@@ -102,7 +102,10 @@ export async function getUserPlannerRole(uid: string): Promise<string | undefine
 export async function getItem(itemId: string): Promise<WorkItem | null> {
   const snap = await db.collection(WORK_ITEMS_COLLECTION).doc(itemId).get();
   if (!snap.exists) return null;
-  return { id: snap.id, ...(snap.data() as Omit<WorkItem, 'id'>) };
+  // Explicitly use snap.id — legacy task docs store a human-readable 'id' field
+  // (e.g. 'T-104') that would override snap.id if spread unchecked.
+  const { id: _ignored, ...data } = snap.data() as Record<string, unknown>;
+  return { id: snap.id, ...(data as Omit<WorkItem, 'id'>) };
 }
 
 export interface ListFilter {
@@ -139,7 +142,10 @@ export async function listItems(
 
   for (const doc of snap.docs) {
     nextCursor = doc.id;
-    const item = { id: doc.id, ...(doc.data() as Omit<WorkItem, 'id'>) };
+    // Strip any stored 'id' field from legacy docs so the Firestore doc key
+    // (snap.id) is always the canonical id, not a human-readable legacy value.
+    const { id: _ignored, ...docData } = doc.data() as Record<string, unknown>;
+    const item = { id: doc.id, ...(docData as Omit<WorkItem, 'id'>) };
     if (filter.spaceId && item.spaceId !== filter.spaceId) continue;
     if (filter.status && item.status !== filter.status) continue;
     if (filter.brandId && !(item.brandIds ?? []).includes(filter.brandId)) continue;
@@ -217,7 +223,10 @@ export async function getMyWork(
     db.collection(WORK_ITEMS_COLLECTION).where('approval.state', '==', 'pending').limit(200).get(),
   ]);
 
-  const assigned = assignedSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<WorkItem, 'id'>) }));
+  const assigned = assignedSnap.docs.map((d) => {
+    const { id: _ignored, ...data } = d.data() as Record<string, unknown>;
+    return { id: d.id, ...(data as Omit<WorkItem, 'id'>) };
+  });
   
   if (roles.includes('agency') || roles.includes('external_agency')) {
     // Legacy tasks have assignedTo at the TOP LEVEL of the Firestore doc, not
@@ -225,7 +234,8 @@ export async function getMyWork(
     const legacyAssignedSnap = await db.collection(WORK_ITEMS_COLLECTION).where('assignedTo', 'in', ['Agency', 'Both']).limit(100).get();
     for (const d of legacyAssignedSnap.docs) {
       if (!assigned.some(a => a.id === d.id)) {
-        assigned.push({ id: d.id, ...(d.data() as Omit<WorkItem, 'id'>) });
+        const { id: _ignored, ...data } = d.data() as Record<string, unknown>;
+        assigned.push({ id: d.id, ...(data as Omit<WorkItem, 'id'>) });
       }
     }
   }
@@ -233,7 +243,8 @@ export async function getMyWork(
   const chainCache = new Map<string, ApprovalChain | null>();
   const awaitingApproval: WorkItem[] = [];
   for (const doc of pendingSnap.docs) {
-    const item: WorkItem = { id: doc.id, ...(doc.data() as Omit<WorkItem, 'id'>) };
+    const { id: _ignored, ...docData } = doc.data() as Record<string, unknown>;
+    const item: WorkItem = { id: doc.id, ...(docData as Omit<WorkItem, 'id'>) };
     const chainId = item.approval?.chainId;
     if (!chainId) continue;
     if (!chainCache.has(chainId)) chainCache.set(chainId, await getApprovalChain(chainId));
