@@ -32,6 +32,7 @@ import {
   executeApprovalDecision,
   executeTransition,
   getItem,
+  getMyWork,
   getWorkflow,
   listItems,
   updateItemFields,
@@ -74,6 +75,18 @@ router.get('/', async (req: AuthedRequest, res: Response, next) => {
     };
     const { items, nextCursor } = await listItems(filter, cursor);
     return res.json({ success: true, items, nextCursor });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── My Work (assigned + awaiting my approval) ────────────────────────────────
+// Defined before "/:id" so "my-work" isn't captured as an item id.
+
+router.get('/my-work', async (req: PlannerRequest, res: Response, next) => {
+  try {
+    const { assigned, awaitingApproval } = await getMyWork(req.uid!, actorFrom(req).roles);
+    return res.json({ success: true, assigned, awaitingApproval });
   } catch (err) {
     next(err);
   }

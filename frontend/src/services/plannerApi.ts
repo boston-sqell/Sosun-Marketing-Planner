@@ -164,6 +164,9 @@ export const plannerApi = {
 
   get: (id: string) => call<{ item: PlannerWorkItem }>(`/items/${id}`).then((r) => r.item),
 
+  myWork: () =>
+    call<{ assigned: PlannerWorkItem[]; awaitingApproval: PlannerWorkItem[] }>('/items/my-work'),
+
   create: (input: CreatePlannerItemInput) =>
     call<{ item: PlannerWorkItem }>('/items/', { method: 'POST', body: JSON.stringify(input) }).then((r) => r.item),
 

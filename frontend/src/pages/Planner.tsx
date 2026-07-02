@@ -32,10 +32,10 @@ export const StatusBadge: React.FC<{ status: string; meta?: PlannerWorkflowStatu
   </span>
 );
 
-/** List / Board view toggle, shared by both planner views. */
-export const PlannerViewTabs: React.FC<{ active: 'list' | 'board' }> = ({ active }) => {
+/** List / Board / My Work view toggle, shared across planner views. */
+export const PlannerViewTabs: React.FC<{ active: 'list' | 'board' | 'mywork' }> = ({ active }) => {
   const navigate = useNavigate();
-  const tab = (key: 'list' | 'board', label: string, path: string) => (
+  const tab = (key: 'list' | 'board' | 'mywork', label: string, path: string) => (
     <button
       onClick={() => navigate(path)}
       style={{
@@ -52,6 +52,7 @@ export const PlannerViewTabs: React.FC<{ active: 'list' | 'board' }> = ({ active
     <div style={{ display: 'inline-flex', gap: 4, background: 'var(--bg)', padding: 4, borderRadius: 10, border: '1px solid var(--border)' }}>
       {tab('list', 'List', '/planner')}
       {tab('board', 'Board', '/planner/board')}
+      {tab('mywork', 'My Work', '/planner/my-work')}
     </div>
   );
 };

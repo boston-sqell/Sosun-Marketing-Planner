@@ -18,7 +18,7 @@ import {
 } from './types';
 import { planTransition } from './workflow';
 import { appendActivity } from './activity';
-import { recordDecision, ApprovalOutcome } from './approvals';
+import { recordDecision, canDecide, ApprovalOutcome } from './approvals';
 import { ApprovalChain } from './types';
 import { RolesConfig } from './permissions';
 import { WORK_ITEMS_COLLECTION, WORKFLOWS_COLLECTION, WORK_ITEM_TYPES_COLLECTION } from './constants';
@@ -146,6 +146,38 @@ export async function getApprovalChain(chainId: string): Promise<ApprovalChain |
   const snap = await db.collection('approvalChains').doc(chainId).get();
   if (!snap.exists) return null;
   return { id: snap.id, ...(snap.data() as Omit<ApprovalChain, 'id'>) };
+}
+
+/**
+ * "My Work" (spec §6): everything assigned to the actor + everything awaiting
+ * their approval. Awaiting-approval requires checking each pending item's chain
+ * stage against the actor's roles/uid — done here, not client-side, because the
+ * chain (approverRoles) isn't carried on the item.
+ */
+export async function getMyWork(
+  uid: string,
+  roles: string[],
+): Promise<{ assigned: WorkItem[]; awaitingApproval: WorkItem[] }> {
+  const [assignedSnap, pendingSnap] = await Promise.all([
+    db.collection(WORK_ITEMS_COLLECTION).where('assigneeUids', 'array-contains', uid).limit(100).get(),
+    db.collection(WORK_ITEMS_COLLECTION).where('approval.state', '==', 'pending').limit(200).get(),
+  ]);
+
+  const assigned = assignedSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<WorkItem, 'id'>) }));
+
+  const chainCache = new Map<string, ApprovalChain | null>();
+  const awaitingApproval: WorkItem[] = [];
+  for (const doc of pendingSnap.docs) {
+    const item: WorkItem = { id: doc.id, ...(doc.data() as Omit<WorkItem, 'id'>) };
+    const chainId = item.approval?.chainId;
+    if (!chainId) continue;
+    if (!chainCache.has(chainId)) chainCache.set(chainId, await getApprovalChain(chainId));
+    const chain = chainCache.get(chainId);
+    const stage = chain?.stages[item.approval!.stageIndex];
+    if (stage && canDecide(stage, roles, uid)) awaitingApproval.push(item);
+  }
+
+  return { assigned, awaitingApproval };
 }
 
 // ── Work item creation ───────────────────────────────────────────────────────
