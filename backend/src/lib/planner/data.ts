@@ -18,6 +18,7 @@ import {
 } from './types';
 import { planTransition } from './workflow';
 import { appendActivity } from './activity';
+import { RolesConfig } from './permissions';
 import { WORK_ITEMS_COLLECTION, WORKFLOWS_COLLECTION, WORK_ITEM_TYPES_COLLECTION } from './constants';
 
 // Collection names live in ./constants so the absorption migration
@@ -46,6 +47,21 @@ export async function getWorkItemType(typeId: string): Promise<WorkItemType | nu
   const snap = await db.collection(WORK_ITEM_TYPES_COLLECTION).doc(typeId).get();
   if (!snap.exists) return null;
   return { id: snap.id, ...(snap.data() as Omit<WorkItemType, 'id'>) };
+}
+
+/** The planner-role permission matrix (plannerConfig/roles). Null if unseeded. */
+export async function getRolesConfig(): Promise<RolesConfig | null> {
+  const snap = await db.collection('plannerConfig').doc('roles').get();
+  if (!snap.exists) return null;
+  return snap.data() as RolesConfig;
+}
+
+/** The user's configured planner role, or undefined if the profile has none. */
+export async function getUserPlannerRole(uid: string): Promise<string | undefined> {
+  const snap = await db.collection('users').doc(uid).get();
+  if (!snap.exists) return undefined;
+  const role = snap.data()?.plannerRole;
+  return typeof role === 'string' && role ? role : undefined;
 }
 
 // ── Work item reads ──────────────────────────────────────────────────────────

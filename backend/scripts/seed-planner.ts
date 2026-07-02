@@ -128,6 +128,45 @@ const CUSTOM_FIELDS = [
   { id: 'objective', label: 'Objective', type: 'longtext', options: [], archived: false },
 ];
 
+/**
+ * Default planner-role permission matrix (plannerConfig/roles, spec §10.2).
+ * Every capability defaults to false where unlisted (the resolver fails closed).
+ * Editable in the Phase 5 settings panel; developer-owned until then.
+ */
+const ROLES_CONFIG = {
+  roles: {
+    admin: {
+      permissions: {
+        createItem: true, editItem: true, deleteItem: true, archiveItem: true,
+        assign: true, comment: true, uploadFile: true, approve: true, manageConfig: true, export: true,
+      },
+    },
+    management: {
+      permissions: { archiveItem: true, assign: true, comment: true, approve: true, export: true },
+    },
+    manager: {
+      permissions: {
+        createItem: true, editItem: true, archiveItem: true,
+        assign: true, comment: true, uploadFile: true, approve: true, export: true,
+      },
+    },
+    marketing: {
+      permissions: { createItem: true, editItem: true, assign: true, comment: true, uploadFile: true },
+    },
+    creative: {
+      permissions: { createItem: true, editItem: true, comment: true, uploadFile: true },
+    },
+    agency: {
+      permissions: { comment: true, uploadFile: true },
+      // Agency is confined to the Creative space and only their own items.
+      spaces: { creative: { onlyAssignee: true } },
+    },
+    readonly: {
+      permissions: {},
+    },
+  },
+};
+
 async function main() {
   console.log('Seeding Marketing Planner Phase 1 config…');
 
@@ -142,6 +181,9 @@ async function main() {
     await db.collection('customFields').doc(id).set(rest);
     console.log(`+ customFields/${id}`);
   }
+
+  await db.collection('plannerConfig').doc('roles').set(ROLES_CONFIG);
+  console.log(`+ plannerConfig/roles (${Object.keys(ROLES_CONFIG.roles).length} roles)`);
 
   console.log('Done.');
 }

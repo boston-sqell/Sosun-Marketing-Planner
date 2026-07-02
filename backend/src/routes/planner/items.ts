@@ -18,6 +18,7 @@
 
 import { Router, Response } from 'express';
 import { requireAuth, AuthedRequest, AppRole } from '../../middleware/auth';
+import { attachPlannerRole, requirePlannerPermission, PlannerRequest } from '../../middleware/planner-rbac';
 import { validate } from '../../middleware/validate';
 import { db } from '../../services/firestore';
 import {
@@ -39,13 +40,20 @@ import { TransitionActor } from '../../lib/planner/types';
 
 const router = Router();
 router.use(requireAuth);
+router.use(attachPlannerRole);
 
 const STAFF: AppRole[] = ['admin', 'internal'];
 const isStaff = (role?: AppRole) => !!role && STAFF.includes(role);
 
-/** Build the engine actor from the request. plannerRole resolution is Phase 3. */
-function actorFrom(req: AuthedRequest): TransitionActor {
-  return { uid: req.uid!, roles: [req.role!], spaceIds: [] };
+/**
+ * Build the engine actor from the request. Workflow `role` conditions match
+ * against BOTH the identity claim (admin/internal/agency…) and the resolved
+ * planner role (manager/marketing/creative…), so a transition can be gated on
+ * either. attachPlannerRole must have run first.
+ */
+function actorFrom(req: PlannerRequest): TransitionActor {
+  const roles = [req.role!, req.plannerRole].filter((r): r is string => !!r);
+  return { uid: req.uid!, roles: Array.from(new Set(roles)), spaceIds: [] };
 }
 
 const nowIso = () => new Date().toISOString();
@@ -71,11 +79,8 @@ router.get('/', async (req: AuthedRequest, res: Response, next) => {
 
 // ── Create ───────────────────────────────────────────────────────────────────
 
-router.post('/', validate(CreatePlannerItemSchema), async (req: AuthedRequest, res: Response, next) => {
+router.post('/', requirePlannerPermission('createItem'), validate(CreatePlannerItemSchema), async (req: PlannerRequest, res: Response, next) => {
   try {
-    if (!isStaff(req.role)) {
-      return res.status(403).json({ success: false, error: 'Forbidden: cannot create work items' });
-    }
     const result = await createItem(req.body, actorFrom(req), nowIso());
     if (!result.ok) {
       return res.status(result.httpStatus).json({ success: false, error: result.message });
@@ -123,11 +128,8 @@ router.get('/:id/transitions', async (req: AuthedRequest, res: Response, next) =
 
 // ── Edit non-status fields ───────────────────────────────────────────────────
 
-router.put('/:id', validate(UpdatePlannerItemSchema), async (req: AuthedRequest, res: Response, next) => {
+router.put('/:id', requirePlannerPermission('editItem'), validate(UpdatePlannerItemSchema), async (req: PlannerRequest, res: Response, next) => {
   try {
-    if (!isStaff(req.role)) {
-      return res.status(403).json({ success: false, error: 'Forbidden: cannot edit work items' });
-    }
     const item = await getItem(req.params.id);
     if (!item) return res.status(404).json({ success: false, error: 'Work item not found' });
     if (item.locked) {
@@ -143,11 +145,8 @@ router.put('/:id', validate(UpdatePlannerItemSchema), async (req: AuthedRequest,
 
 // ── Delete ───────────────────────────────────────────────────────────────────
 
-router.delete('/:id', async (req: AuthedRequest, res: Response, next) => {
+router.delete('/:id', requirePlannerPermission('deleteItem'), async (req: PlannerRequest, res: Response, next) => {
   try {
-    if (req.role !== 'admin') {
-      return res.status(403).json({ success: false, error: 'Forbidden: only admin can delete work items' });
-    }
     const ref = db.collection(WORK_ITEMS_COLLECTION).doc(req.params.id);
     // recursiveDelete removes the doc AND its activity/attachments/comments
     // subcollections — a plain delete() would orphan them (Firestore doesn't
