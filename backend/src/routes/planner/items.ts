@@ -26,9 +26,11 @@ import {
   UpdatePlannerItemSchema,
   TransitionSchema,
   ApprovalDecisionSchema,
+  FromTemplateSchema,
 } from '../../schemas/planner';
 import {
   createItem,
+  createFromTemplate,
   executeApprovalDecision,
   executeTransition,
   getItem,
@@ -101,6 +103,23 @@ router.post('/', requirePlannerPermission('createItem'), validate(CreatePlannerI
       return res.status(result.httpStatus).json({ success: false, error: result.message });
     }
     return res.json({ success: true, item: result.item });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── Create from template ─────────────────────────────────────────────────────
+
+router.post('/from-template', requirePlannerPermission('createItem'), validate(FromTemplateSchema), async (req: PlannerRequest, res: Response, next) => {
+  try {
+    const result = await createFromTemplate(
+      req.body.templateId,
+      { spaceId: req.body.spaceId, brandIds: req.body.brandIds, titleOverride: req.body.titleOverride },
+      actorFrom(req),
+      nowIso(),
+    );
+    if (!result.ok) return res.status(result.httpStatus).json({ success: false, error: result.message });
+    return res.json({ success: true, root: result.root, subtasks: result.subtasks });
   } catch (err) {
     next(err);
   }

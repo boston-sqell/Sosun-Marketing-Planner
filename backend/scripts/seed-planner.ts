@@ -127,6 +127,55 @@ const CAMPAIGN_TYPE = {
   archived: false,
 };
 
+// A lightweight 3-status workflow for creative deliverables spawned by automation.
+const SIMPLE_WORKFLOW: Workflow = {
+  id: 'wf_simple',
+  name: 'Simple workflow',
+  initialStatus: 'todo',
+  statuses: [
+    { id: 'todo', name: 'To Do', category: 'todo', color: '#8b8b8b' },
+    { id: 'doing', name: 'In Progress', category: 'in_progress', color: '#6366f1' },
+    { id: 'done', name: 'Done', category: 'done', color: '#22c55e' },
+  ],
+  transitions: [
+    { id: 'start', name: 'Start', from: ['todo'], to: 'doing', conditions: [{ type: 'role', roles: ['admin', 'internal', 'creative'] }] },
+    { id: 'finish', name: 'Mark done', from: ['doing'], to: 'done', conditions: [{ type: 'role', roles: ['admin', 'internal', 'creative'] }] },
+  ],
+};
+
+const CREATIVE_TASK_TYPE = {
+  name: 'Creative Task',
+  icon: 'palette',
+  workflowId: 'wf_simple',
+  fieldIds: [],
+  archived: false,
+};
+
+// Template: a creative bundle (root + two deliverable subtasks), relative dates.
+const CREATIVE_BUNDLE_TEMPLATE = {
+  name: 'Creative bundle',
+  root: { typeId: 'creative_task', title: 'Creative bundle', dueInDays: 14 },
+  subtasks: [
+    { typeId: 'creative_task', title: 'Social post', dueInDays: 7 },
+    { typeId: 'creative_task', title: 'Key visual', dueInDays: 10 },
+  ],
+};
+
+// Automation: when a campaign is approved, spawn the creative bundle as subtasks,
+// assign the creative team, and set the campaign due date 30 days out.
+const ON_CAMPAIGN_APPROVED_AUTOMATION = {
+  name: 'On campaign approved → spawn creative bundle',
+  trigger: { type: 'statusEntered', statusId: 'approved', typeIds: ['campaign'] },
+  conditions: [],
+  actions: [
+    { type: 'createWorkItems', templateId: 'tpl_creative_bundle', linkAsSubtasks: true },
+    { type: 'assignRole', role: 'creative' },
+    { type: 'setDueDate', relativeDays: 30 },
+    { type: 'notify', audience: 'assignees', template: 'work_assigned' },
+  ],
+  enabled: true,
+};
+
 const CUSTOM_FIELDS = [
   { id: 'budget', label: 'Budget (MVR)', type: 'currency', options: [], archived: false },
   { id: 'objective', label: 'Objective', type: 'longtext', options: [], archived: false },
@@ -193,8 +242,14 @@ async function main() {
   await db.collection('workflows').doc(CAMPAIGN_WORKFLOW.id).set(CAMPAIGN_WORKFLOW);
   console.log(`+ workflows/${CAMPAIGN_WORKFLOW.id} (${CAMPAIGN_WORKFLOW.transitions.length} transitions)`);
 
+  await db.collection('workflows').doc(SIMPLE_WORKFLOW.id).set(SIMPLE_WORKFLOW);
+  console.log(`+ workflows/${SIMPLE_WORKFLOW.id}`);
+
   await db.collection('workItemTypes').doc('campaign').set(CAMPAIGN_TYPE);
   console.log('+ workItemTypes/campaign');
+
+  await db.collection('workItemTypes').doc('creative_task').set(CREATIVE_TASK_TYPE);
+  console.log('+ workItemTypes/creative_task');
 
   for (const f of CUSTOM_FIELDS) {
     const { id, ...rest } = f;
@@ -207,6 +262,12 @@ async function main() {
 
   await db.collection('approvalChains').doc('campaign_approval').set(CAMPAIGN_APPROVAL_CHAIN);
   console.log(`+ approvalChains/campaign_approval (${CAMPAIGN_APPROVAL_CHAIN.stages.length} stages)`);
+
+  await db.collection('templates').doc('tpl_creative_bundle').set(CREATIVE_BUNDLE_TEMPLATE);
+  console.log(`+ templates/tpl_creative_bundle (${CREATIVE_BUNDLE_TEMPLATE.subtasks.length} subtasks)`);
+
+  await db.collection('automations').doc('on_campaign_approved').set(ON_CAMPAIGN_APPROVED_AUTOMATION);
+  console.log('+ automations/on_campaign_approved');
 
   console.log('Done.');
 }

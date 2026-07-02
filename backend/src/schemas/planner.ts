@@ -54,5 +54,12 @@ export const ApprovalDecisionSchema = z.object({
   comment: z.string().trim().max(5000).optional(),
 });
 
+export const FromTemplateSchema = z.object({
+  templateId: z.string().min(1, 'templateId is required').trim(),
+  spaceId: z.string().min(1, 'spaceId is required').trim(),
+  brandIds: z.array(z.string()).default([]),
+  titleOverride: z.string().trim().optional(),
+});
+
 export type CreatePlannerItem = z.infer<typeof CreatePlannerItemSchema>;
 export type UpdatePlannerItem = z.infer<typeof UpdatePlannerItemSchema>;

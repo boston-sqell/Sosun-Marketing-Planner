@@ -154,6 +154,59 @@ export interface WorkItem {
   archivedAt?: string | null;
 }
 
+// ── Templates (templates/{templateId}) ───────────────────────────────────────
+
+export interface TemplateNode {
+  typeId: string;
+  title: string;
+  description?: string;
+  priority?: Priority;
+  fields?: Record<string, unknown>;
+  /** Due date set to now + dueInDays at instantiation. */
+  dueInDays?: number;
+}
+
+export interface Template {
+  id: string;
+  name: string;
+  root: TemplateNode;
+  /** Instantiated as subtasks of the root (parentId = root). */
+  subtasks?: TemplateNode[];
+}
+
+// ── Automations (automations/{automationId}) ─────────────────────────────────
+
+export type AutomationTrigger =
+  | { type: 'statusEntered'; statusId: string; typeIds?: string[] }
+  | { type: 'itemCreated'; typeIds?: string[] };
+
+export type AutomationCondition = { type: 'fieldEquals'; fieldId: string; value: unknown };
+
+export type AutomationAction =
+  | { type: 'setField'; fieldId: string; value: unknown }
+  | { type: 'setDueDate'; relativeDays: number }
+  | { type: 'assignRole'; role: string }
+  | { type: 'createWorkItems'; templateId: string; linkAsSubtasks?: boolean }
+  | { type: 'notify'; audience: string; template: string }
+  | { type: 'webhook'; url: string };
+
+export interface Automation {
+  id: string;
+  name: string;
+  trigger: AutomationTrigger;
+  conditions?: AutomationCondition[];
+  actions: AutomationAction[];
+  enabled: boolean;
+}
+
+/** The event fed to the automation evaluator after a mutation. */
+export interface AutomationEvent {
+  type: 'statusEntered' | 'itemCreated';
+  /** Present for statusEntered. */
+  statusId?: string;
+  typeId: string;
+}
+
 // ── Activity audit (workItems/{id}/activity/{entryId}) ───────────────────────
 
 export type ActivityKind =

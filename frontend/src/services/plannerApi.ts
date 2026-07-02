@@ -91,6 +91,11 @@ export interface PlannerCustomField {
   archived?: boolean;
 }
 
+export interface PlannerTemplateSummary {
+  id: string;
+  name: string;
+}
+
 export interface CreatePlannerItemInput {
   typeId: string;
   title: string;
@@ -170,6 +175,12 @@ export const plannerApi = {
   create: (input: CreatePlannerItemInput) =>
     call<{ item: PlannerWorkItem }>('/items/', { method: 'POST', body: JSON.stringify(input) }).then((r) => r.item),
 
+  fromTemplate: (templateId: string, spaceId: string, titleOverride?: string) =>
+    call<{ root: PlannerWorkItem; subtasks: PlannerWorkItem[] }>('/items/from-template', {
+      method: 'POST',
+      body: JSON.stringify({ templateId, spaceId, titleOverride }),
+    }).then((r) => r.root),
+
   update: (id: string, patch: Partial<PlannerWorkItem>) =>
     call<{ success: boolean }>(`/items/${id}`, { method: 'PUT', body: JSON.stringify(patch) }),
 
@@ -199,6 +210,7 @@ export const plannerApi = {
     workflow: (id: string) => call<{ workflow: PlannerWorkflow }>(`/config/workflows/${id}`).then((r) => r.workflow),
     types: () => call<{ types: PlannerWorkItemType[] }>('/config/types').then((r) => r.types),
     fields: () => call<{ fields: PlannerCustomField[] }>('/config/fields').then((r) => r.fields),
+    templates: () => call<{ templates: PlannerTemplateSummary[] }>('/config/templates').then((r) => r.templates),
   },
 };
 

@@ -14,7 +14,7 @@
 
 import { Router, Response } from 'express';
 import { requireAuth, AuthedRequest } from '../../middleware/auth';
-import { getWorkflow, listWorkflows, listWorkItemTypes, listCustomFields } from '../../lib/planner/data';
+import { getWorkflow, listWorkflows, listWorkItemTypes, listCustomFields, listTemplates } from '../../lib/planner/data';
 
 const router = Router();
 router.use(requireAuth);
@@ -48,6 +48,14 @@ router.get('/types', async (_req: AuthedRequest, res: Response, next) => {
 router.get('/fields', async (_req: AuthedRequest, res: Response, next) => {
   try {
     res.json({ success: true, fields: await listCustomFields() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/templates', async (_req: AuthedRequest, res: Response, next) => {
+  try {
+    res.json({ success: true, templates: await listTemplates() });
   } catch (err) {
     next(err);
   }

@@ -19,7 +19,9 @@ import {
 import { planTransition } from './workflow';
 import { appendActivity } from './activity';
 import { recordDecision, canDecide, ApprovalOutcome } from './approvals';
-import { ApprovalChain } from './types';
+import { selectAutomations, MAX_AUTOMATION_DEPTH } from './automations';
+import { computeDueDate } from './templates';
+import { ApprovalChain, Automation, AutomationEvent, Template } from './types';
 import { RolesConfig } from './permissions';
 import { WORK_ITEMS_COLLECTION, WORKFLOWS_COLLECTION, WORK_ITEM_TYPES_COLLECTION } from './constants';
 
@@ -72,6 +74,11 @@ export interface CustomField {
 export async function listCustomFields(): Promise<CustomField[]> {
   const snap = await db.collection('customFields').get();
   return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<CustomField, 'id'>) }));
+}
+
+export async function listTemplates(): Promise<Array<{ id: string; name: string }>> {
+  const snap = await db.collection('templates').get();
+  return snap.docs.map((d) => ({ id: d.id, name: (d.data().name as string) ?? d.id }));
 }
 
 /** The planner-role permission matrix (plannerConfig/roles). Null if unseeded. */
@@ -148,6 +155,23 @@ export async function getApprovalChain(chainId: string): Promise<ApprovalChain |
   return { id: snap.id, ...(snap.data() as Omit<ApprovalChain, 'id'>) };
 }
 
+export async function getTemplate(templateId: string): Promise<Template | null> {
+  const snap = await db.collection('templates').doc(templateId).get();
+  if (!snap.exists) return null;
+  return { id: snap.id, ...(snap.data() as Omit<Template, 'id'>) };
+}
+
+export async function listAutomations(): Promise<Automation[]> {
+  const snap = await db.collection('automations').get();
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Automation, 'id'>) }));
+}
+
+/** Uids of users whose planner role matches — used by the assignRole action. */
+async function getUidsByPlannerRole(role: string): Promise<string[]> {
+  const snap = await db.collection('users').where('plannerRole', '==', role).get();
+  return snap.docs.map((d) => d.id);
+}
+
 /**
  * "My Work" (spec §6): everything assigned to the actor + everything awaiting
  * their approval. Awaiting-approval requires checking each pending item's chain
@@ -207,6 +231,7 @@ export async function createItem(
   input: CreateItemInput,
   actor: TransitionActor,
   now: string,
+  depth = 0,
 ): Promise<{ ok: true; item: WorkItem } | { ok: false; httpStatus: 400; message: string }> {
   const type = await getWorkItemType(input.typeId);
   if (!type || type.archived) {
@@ -258,7 +283,77 @@ export async function createItem(
     appendActivity(tx, db, ref.id, activity);
   });
 
+  await runAutomations({ type: 'itemCreated', typeId: type.id }, item, actor, now, depth);
+
   return { ok: true, item };
+}
+
+// ── Templates (spec §3.8) ────────────────────────────────────────────────────
+
+export interface FromTemplateInput {
+  spaceId: string;
+  brandIds?: string[];
+  titleOverride?: string;
+  /** When set, the template root is created as a subtask of this item. */
+  parentId?: string | null;
+}
+
+/**
+ * Instantiate a template as a work-item tree: the root, then each subtask node
+ * with parentId = root. Relative `dueInDays` become absolute dates. Reuses
+ * createItem so each node gets its workflow snapshot + `created` audit entry
+ * (and its own itemCreated automations, depth-guarded).
+ */
+export async function createFromTemplate(
+  templateId: string,
+  input: FromTemplateInput,
+  actor: TransitionActor,
+  now: string,
+  depth = 0,
+): Promise<{ ok: true; root: WorkItem; subtasks: WorkItem[] } | { ok: false; httpStatus: 400; message: string }> {
+  const template = await getTemplate(templateId);
+  if (!template) return { ok: false, httpStatus: 400, message: `Unknown template "${templateId}".` };
+
+  const rootRes = await createItem(
+    {
+      typeId: template.root.typeId,
+      title: input.titleOverride || template.root.title,
+      description: template.root.description,
+      spaceId: input.spaceId,
+      brandIds: input.brandIds,
+      priority: template.root.priority,
+      fields: template.root.fields,
+      parentId: input.parentId ?? null,
+      dueDate: computeDueDate(now, template.root.dueInDays),
+    },
+    actor,
+    now,
+    depth,
+  );
+  if (!rootRes.ok) return rootRes;
+
+  const subtasks: WorkItem[] = [];
+  for (const node of template.subtasks ?? []) {
+    const res = await createItem(
+      {
+        typeId: node.typeId,
+        title: node.title,
+        description: node.description,
+        spaceId: input.spaceId,
+        brandIds: input.brandIds,
+        priority: node.priority,
+        fields: node.fields,
+        parentId: rootRes.item.id,
+        dueDate: computeDueDate(now, node.dueInDays),
+      },
+      actor,
+      now,
+      depth,
+    );
+    if (res.ok) subtasks.push(res.item);
+  }
+
+  return { ok: true, root: rootRes.item, subtasks };
 }
 
 /**
@@ -336,6 +431,7 @@ export async function executeTransition(
   transitionId: string,
   actor: TransitionActor,
   now: string,
+  depth = 0,
 ): Promise<TransitionDecision> {
   const item = await getItem(itemId);
   if (!item) return { ok: false, httpStatus: 404, code: 'transition_not_found' };
@@ -363,6 +459,21 @@ export async function executeTransition(
     await dispatchAsyncOps(itemId, decision.asyncOps, actor);
   }
 
+  // Spec §4 step 8: evaluate statusEntered automations against the post-
+  // transition item. Re-read so field-based conditions see committed state.
+  if (decision.ok) {
+    const updated = await getItem(itemId);
+    if (updated) {
+      await runAutomations(
+        { type: 'statusEntered', statusId: decision.toStatus, typeId: updated.typeId },
+        updated,
+        actor,
+        now,
+        depth,
+      );
+    }
+  }
+
   return decision;
 }
 
@@ -387,6 +498,91 @@ async function dispatchAsyncOps(
     // eslint-disable-next-line no-console
     console.log(`[planner] async post-function deferred (Phase 1 stub): item=${itemId} type=${op.type} actor=${actor.uid}`);
   }
+}
+
+// ── Automations (spec §3.7) ──────────────────────────────────────────────────
+
+/**
+ * Evaluate and run automations for an event. Loop-protected by `depth`:
+ * automation-initiated creations/transitions increment it, and evaluation stops
+ * once MAX_AUTOMATION_DEPTH is reached.
+ */
+export async function runAutomations(
+  event: AutomationEvent,
+  item: WorkItem,
+  actor: TransitionActor,
+  now: string,
+  depth: number,
+): Promise<void> {
+  if (depth >= MAX_AUTOMATION_DEPTH) return;
+
+  const selected = selectAutomations(await listAutomations(), event, item);
+  for (const auto of selected) {
+    await runAutomationActions(auto, item, actor, now, depth);
+  }
+}
+
+/**
+ * Execute one automation's actions. Item-mutating actions (setField, setDueDate,
+ * assignRole) are merged into a single write; createWorkItems instantiates a
+ * template (depth + 1); notify/webhook remain the logged stub until the Firestore
+ * outbox lands. An `automationRun` audit entry is appended.
+ *
+ * NOTE: these effects run after the triggering mutation committed and are NOT in
+ * the same transaction — the known atomicity gap (the outbox will close it).
+ */
+async function runAutomationActions(
+  auto: Automation,
+  item: WorkItem,
+  actor: TransitionActor,
+  now: string,
+  depth: number,
+): Promise<void> {
+  const ref = db.collection(WORK_ITEMS_COLLECTION).doc(item.id);
+  const patch: Record<string, unknown> = {};
+  const assigneeAdds: string[] = [];
+
+  for (const action of auto.actions) {
+    switch (action.type) {
+      case 'setField':
+        patch.fields = { ...((patch.fields as object) ?? item.fields ?? {}), [action.fieldId]: action.value };
+        break;
+      case 'setDueDate':
+        patch.dueDate = computeDueDate(now, action.relativeDays);
+        break;
+      case 'assignRole':
+        assigneeAdds.push(...(await getUidsByPlannerRole(action.role)));
+        break;
+      case 'createWorkItems':
+        await createFromTemplate(
+          action.templateId,
+          { spaceId: item.spaceId, brandIds: item.brandIds, parentId: action.linkAsSubtasks ? item.id : null },
+          actor,
+          now,
+          depth + 1,
+        );
+        break;
+      case 'notify':
+      case 'webhook':
+        // eslint-disable-next-line no-console
+        console.log(`[planner] automation ${auto.id} ${action.type} deferred (outbox stub): item=${item.id}`);
+        break;
+    }
+  }
+
+  if (assigneeAdds.length > 0) {
+    patch.assigneeUids = Array.from(new Set([...(item.assigneeUids ?? []), ...assigneeAdds]));
+  }
+  if (Object.keys(patch).length > 0) {
+    await ref.set({ ...patch, updatedAt: now }, { merge: true });
+  }
+
+  await ref.collection('activity').add({
+    ts: now,
+    actorUid: 'system',
+    kind: 'automationRun',
+    payload: { automationId: auto.id, name: auto.name, actions: auto.actions.map((a) => a.type) },
+  });
 }
 
 // ── Approval decisions (spec §3.5, §6) ───────────────────────────────────────

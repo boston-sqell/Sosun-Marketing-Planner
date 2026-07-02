@@ -4,7 +4,7 @@ import { Plus, Megaphone, AlertCircle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { plannerApi, buildStatusIndex, prettyStatus } from '../services/plannerApi';
-import type { PlannerWorkItem, PlannerWorkflowStatus } from '../services/plannerApi';
+import type { PlannerWorkItem, PlannerWorkflowStatus, PlannerTemplateSummary } from '../services/plannerApi';
 
 const PRIORITY_COLORS: Record<string, string> = {
   low: '#94a3b8',
@@ -64,6 +64,7 @@ export const Planner: React.FC = () => {
 
   const [items, setItems] = useState<PlannerWorkItem[]>([]);
   const [statusIndex, setStatusIndex] = useState<Map<string, Map<string, PlannerWorkflowStatus>>>(new Map());
+  const [templates, setTemplates] = useState<PlannerTemplateSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [newTitle, setNewTitle] = useState('');
@@ -73,13 +74,32 @@ export const Planner: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const [itemsRes, workflows] = await Promise.all([plannerApi.listAll(), plannerApi.config.workflows()]);
+      const [itemsRes, workflows, tpls] = await Promise.all([
+        plannerApi.listAll(),
+        plannerApi.config.workflows(),
+        plannerApi.config.templates().catch(() => []),
+      ]);
       setItems(itemsRes.items);
       setStatusIndex(buildStatusIndex(workflows));
+      setTemplates(tpls);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load work items.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleFromTemplate = async (templateId: string) => {
+    if (!templateId) return;
+    setCreating(true);
+    setError(null);
+    try {
+      const root = await plannerApi.fromTemplate(templateId, 'marketing');
+      navigate(`/planner/${root.id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to instantiate template.');
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -124,6 +144,17 @@ export const Planner: React.FC = () => {
             <button className="btn btn-primary" onClick={handleCreate} disabled={creating || !newTitle.trim()}>
               <Plus size={16} /><span>{creating ? 'Creating…' : 'New campaign'}</span>
             </button>
+            {templates.length > 0 && (
+              <select
+                value=""
+                onChange={(e) => handleFromTemplate(e.target.value)}
+                disabled={creating}
+                style={{ padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 8, fontSize: 14, color: 'var(--text-muted)' }}
+              >
+                <option value="">From template…</option>
+                {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            )}
           </div>
         )}
       </div>
