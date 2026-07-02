@@ -24,6 +24,7 @@ export interface PlannerWorkItem {
   parentId?: string | null;
   startDate?: string | null;
   dueDate?: string | null;
+  approval?: PlannerApprovalState | null;
   locked?: boolean;
   createdAt?: string;
   updatedAt?: string;
@@ -34,6 +35,21 @@ export interface PlannerTransition {
   id: string;
   name: string;
   to: string;
+}
+
+export interface PlannerApprovalDecision {
+  uid: string;
+  decision: 'approve' | 'reject';
+  comment?: string;
+  ts: string;
+  stageIndex: number;
+}
+
+export interface PlannerApprovalState {
+  chainId: string;
+  stageIndex: number;
+  decisions: PlannerApprovalDecision[];
+  state: 'pending' | 'approved' | 'rejected';
 }
 
 export interface PlannerActivityEntry {
@@ -165,6 +181,14 @@ export const plannerApi = {
 
   activity: (id: string) =>
     call<{ activity: PlannerActivityEntry[] }>(`/items/${id}/activity`).then((r) => r.activity),
+
+  /** Submit an approval decision. Throws ApiError (403 not_an_approver,
+   *  422 reject_comment_required, 409 already_decided, …) on failure. */
+  decide: (id: string, decision: 'approve' | 'reject', comment?: string) =>
+    call<{ resolution: string; approval: PlannerApprovalState }>(`/items/${id}/approval`, {
+      method: 'POST',
+      body: JSON.stringify({ decision, comment }),
+    }),
 
   // ── Config (read-only) ──────────────────────────────────────────────────────
   config: {

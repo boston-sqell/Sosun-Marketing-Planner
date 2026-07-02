@@ -35,6 +35,8 @@ export const PlannerItem: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [validatorErrors, setValidatorErrors] = useState<string[]>([]);
   const [firing, setFiring] = useState<string | null>(null);
+  const [approvalComment, setApprovalComment] = useState('');
+  const [deciding, setDeciding] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -79,6 +81,25 @@ export const PlannerItem: React.FC = () => {
       }
     } finally {
       setFiring(null);
+    }
+  };
+
+  const decide = async (decision: 'approve' | 'reject') => {
+    if (!id) return;
+    if (decision === 'reject' && !approvalComment.trim()) {
+      setError('A comment is required to reject.');
+      return;
+    }
+    setDeciding(true);
+    setError(null);
+    try {
+      await plannerApi.decide(id, decision, approvalComment.trim() || undefined);
+      setApprovalComment('');
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to submit decision.');
+    } finally {
+      setDeciding(false);
     }
   };
 
@@ -142,6 +163,59 @@ export const PlannerItem: React.FC = () => {
         </div>
       )}
 
+      {/* Approvals */}
+      {item.approval && (
+        <div className="section-card" style={{ padding: 16, marginBottom: 16 }}>
+          <div style={{ ...sectionTitle, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>Approvals</span>
+            <ApprovalStateBadge state={item.approval.state} />
+          </div>
+
+          {item.approval.decisions.length > 0 && (
+            <ul style={{ listStyle: 'none', margin: '0 0 12px', padding: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {item.approval.decisions.map((d, i) => (
+                <li key={i} style={{ fontSize: 13, display: 'flex', gap: 8, alignItems: 'baseline' }}>
+                  <span style={{ fontWeight: 700, color: d.decision === 'approve' ? '#16a34a' : '#dc2626' }}>
+                    {d.decision === 'approve' ? 'Approved' : 'Rejected'}
+                  </span>
+                  <span style={{ color: 'var(--text-muted)' }}>stage {d.stageIndex + 1} · {new Date(d.ts).toLocaleString()}</span>
+                  {d.comment && <span style={{ fontStyle: 'italic' }}>“{d.comment}”</span>}
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {item.approval.state === 'pending' ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Awaiting stage {item.approval.stageIndex + 1} sign-off.</div>
+              <textarea
+                value={approvalComment}
+                onChange={(e) => setApprovalComment(e.target.value)}
+                placeholder="Comment (required to reject)…"
+                rows={2}
+                style={{ padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 8, fontSize: 14, resize: 'vertical', fontFamily: 'inherit' }}
+              />
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-primary" onClick={() => decide('approve')} disabled={deciding}>
+                  {deciding ? 'Submitting…' : 'Approve'}
+                </button>
+                <button
+                  onClick={() => decide('reject')}
+                  disabled={deciding || !approvalComment.trim()}
+                  style={{ background: '#fff', color: '#dc2626', border: '1px solid #fecaca', borderRadius: 8, padding: '8px 16px', fontWeight: 700, cursor: deciding || !approvalComment.trim() ? 'not-allowed' : 'pointer', opacity: !approvalComment.trim() ? 0.6 : 1 }}
+                >
+                  Reject
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+              This approval is {item.approval.state}.
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Overview */}
       <div className="section-card" style={{ padding: 16, marginBottom: 16 }}>
         <div style={sectionTitle}>Overview</div>
@@ -189,6 +263,18 @@ const sectionTitle: React.CSSProperties = {
   fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 12,
   textTransform: 'uppercase', letterSpacing: 0.5,
 };
+
+const APPROVAL_STATE_COLORS: Record<string, string> = {
+  pending: '#f59e0b',
+  approved: '#16a34a',
+  rejected: '#dc2626',
+};
+
+const ApprovalStateBadge: React.FC<{ state: string }> = ({ state }) => (
+  <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 999, color: '#fff', background: APPROVAL_STATE_COLORS[state] || '#64748b', textTransform: 'capitalize' }}>
+    {state}
+  </span>
+);
 
 const Row: React.FC<{ label: string; value: string }> = ({ label, value }) => (
   <>

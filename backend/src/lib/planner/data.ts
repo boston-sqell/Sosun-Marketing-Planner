@@ -18,6 +18,8 @@ import {
 } from './types';
 import { planTransition } from './workflow';
 import { appendActivity } from './activity';
+import { recordDecision, ApprovalOutcome } from './approvals';
+import { ApprovalChain } from './types';
 import { RolesConfig } from './permissions';
 import { WORK_ITEMS_COLLECTION, WORKFLOWS_COLLECTION, WORK_ITEM_TYPES_COLLECTION } from './constants';
 
@@ -138,6 +140,12 @@ export async function listItems(
 
   if (snap.docs.length < pageSize) nextCursor = null;
   return { items, nextCursor };
+}
+
+export async function getApprovalChain(chainId: string): Promise<ApprovalChain | null> {
+  const snap = await db.collection('approvalChains').doc(chainId).get();
+  if (!snap.exists) return null;
+  return { id: snap.id, ...(snap.data() as Omit<ApprovalChain, 'id'>) };
 }
 
 // ── Work item creation ───────────────────────────────────────────────────────
@@ -347,4 +355,78 @@ async function dispatchAsyncOps(
     // eslint-disable-next-line no-console
     console.log(`[planner] async post-function deferred (Phase 1 stub): item=${itemId} type=${op.type} actor=${actor.uid}`);
   }
+}
+
+// ── Approval decisions (spec §3.5, §6) ───────────────────────────────────────
+
+export interface ApprovalDecisionInput {
+  uid: string;
+  /** Actor's roles (identity claim + planner role) for approver eligibility. */
+  roles: string[];
+  decision: 'approve' | 'reject';
+  comment?: string;
+}
+
+/**
+ * Record an approve/reject decision on an item's in-progress approval. The pure
+ * chain logic (eligibility, thresholds, stage progression) lives in
+ * approvals.ts; this executor loads the chain, applies the decision + audit
+ * entry in a transaction, and — if the chain is rejected — fires the chain's
+ * onReject transition as a system-initiated move (bypassing conditions).
+ */
+export async function executeApprovalDecision(
+  itemId: string,
+  input: ApprovalDecisionInput,
+  now: string,
+): Promise<ApprovalOutcome> {
+  const item = await getItem(itemId);
+  if (!item) return { ok: false, httpStatus: 404, code: 'not_found' };
+  if (!item.approval || !item.approval.chainId) {
+    return { ok: false, httpStatus: 409, code: 'no_approval_in_progress' };
+  }
+
+  const chain = await getApprovalChain(item.approval.chainId);
+  if (!chain) return { ok: false, httpStatus: 409, code: 'approval_chain_missing' };
+
+  const ref = db.collection(WORK_ITEMS_COLLECTION).doc(itemId);
+
+  const outcome = await db.runTransaction<ApprovalOutcome>(async (tx) => {
+    const fresh = await tx.get(ref);
+    if (!fresh.exists) return { ok: false, httpStatus: 404, code: 'not_found' };
+    const freshItem: WorkItem = { id: fresh.id, ...(fresh.data() as Omit<WorkItem, 'id'>) };
+    if (!freshItem.approval || freshItem.approval.state !== 'pending') {
+      return { ok: false, httpStatus: 409, code: 'no_approval_in_progress' };
+    }
+
+    const result = recordDecision(chain, freshItem.approval, { ...input, now });
+    if (!result.ok) return result;
+
+    tx.update(ref, { approval: result.approval, updatedAt: now });
+    appendActivity(tx, db, itemId, {
+      ts: now,
+      actorUid: input.uid,
+      kind: 'approvalDecision',
+      payload: {
+        decision: input.decision,
+        stageIndex: freshItem.approval.stageIndex,
+        resolution: result.resolution,
+        comment: input.comment?.trim() || null,
+      },
+    });
+    return result;
+  });
+
+  // Chain resolution drives the workflow via system-initiated transitions
+  // (conditions bypassed, validators still apply). Rejection bounces the item
+  // (onReject); final approval advances it (onApprove).
+  if (outcome.ok) {
+    const sysActor = { uid: input.uid, roles: input.roles, system: true };
+    if (outcome.resolution === 'rejected' && outcome.fireTransition) {
+      await executeTransition(itemId, outcome.fireTransition, sysActor, now);
+    } else if (outcome.resolution === 'approved' && chain.onApprove) {
+      await executeTransition(itemId, chain.onApprove, sysActor, now);
+    }
+  }
+
+  return outcome;
 }

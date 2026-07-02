@@ -59,14 +59,18 @@ const CAMPAIGN_WORKFLOW: Workflow = {
       ],
     },
     {
+      // Fired by the approval chain (onApprove) once every stage signs off.
+      // approvalComplete guards it so it can't be forced before sign-off.
       id: 'approve',
       name: 'Approve',
       from: ['approval'],
       to: 'approved',
       conditions: [{ type: 'role', roles: ['admin'] }],
+      validators: [{ type: 'approvalComplete' }],
       postFunctions: [{ type: 'unlockEditing' }],
     },
     {
+      // Fired by the approval chain (onReject) when any stage rejects.
       id: 'reject',
       name: 'Reject',
       from: ['approval'],
@@ -129,6 +133,22 @@ const CUSTOM_FIELDS = [
 ];
 
 /**
+ * Campaign approval chain (spec §3.5). Two role-based `any` stages — one manager
+ * sign-off, then one management sign-off. onApprove/onReject drive the workflow.
+ * (all/majority modes need an explicit approverUids list or minApprovals — see
+ * ApprovalStage in lib/planner/types.ts.)
+ */
+const CAMPAIGN_APPROVAL_CHAIN = {
+  name: 'Campaign approval',
+  stages: [
+    { name: 'Marketing Manager', approverRoles: ['manager', 'admin'], mode: 'any' },
+    { name: 'Management', approverRoles: ['management', 'admin'], mode: 'any' },
+  ],
+  onApprove: 'approve',
+  onReject: 'reject',
+};
+
+/**
  * Default planner-role permission matrix (plannerConfig/roles, spec §10.2).
  * Every capability defaults to false where unlisted (the resolver fails closed).
  * Editable in the Phase 5 settings panel; developer-owned until then.
@@ -184,6 +204,9 @@ async function main() {
 
   await db.collection('plannerConfig').doc('roles').set(ROLES_CONFIG);
   console.log(`+ plannerConfig/roles (${Object.keys(ROLES_CONFIG.roles).length} roles)`);
+
+  await db.collection('approvalChains').doc('campaign_approval').set(CAMPAIGN_APPROVAL_CHAIN);
+  console.log(`+ approvalChains/campaign_approval (${CAMPAIGN_APPROVAL_CHAIN.stages.length} stages)`);
 
   console.log('Done.');
 }

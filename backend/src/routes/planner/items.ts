@@ -25,9 +25,11 @@ import {
   CreatePlannerItemSchema,
   UpdatePlannerItemSchema,
   TransitionSchema,
+  ApprovalDecisionSchema,
 } from '../../schemas/planner';
 import {
   createItem,
+  executeApprovalDecision,
   executeTransition,
   getItem,
   getWorkflow,
@@ -171,6 +173,24 @@ router.post('/:id/transition', validate(TransitionSchema), async (req: AuthedReq
       });
     }
     return res.json({ success: true, status: decision.toStatus });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── Approval decision (approve / reject) ─────────────────────────────────────
+
+router.post('/:id/approval', requirePlannerPermission('approve'), validate(ApprovalDecisionSchema), async (req: PlannerRequest, res: Response, next) => {
+  try {
+    const outcome = await executeApprovalDecision(
+      req.params.id,
+      { uid: req.uid!, roles: actorFrom(req).roles, decision: req.body.decision, comment: req.body.comment },
+      nowIso(),
+    );
+    if (!outcome.ok) {
+      return res.status(outcome.httpStatus).json({ success: false, error: outcome.code });
+    }
+    return res.json({ success: true, resolution: outcome.resolution, approval: outcome.approval });
   } catch (err) {
     next(err);
   }

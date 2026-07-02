@@ -81,11 +81,47 @@ export interface Workflow {
 
 export type Priority = 'low' | 'normal' | 'high' | 'urgent';
 
+export interface ApprovalDecision {
+  uid: string;
+  decision: 'approve' | 'reject';
+  comment?: string;
+  ts: string;
+  /** Which chain stage this decision was cast at. */
+  stageIndex: number;
+}
+
 export interface ApprovalState {
   chainId: string;
   stageIndex: number;
-  decisions: Array<{ uid: string; decision: 'approve' | 'reject'; comment?: string; ts: string }>;
+  decisions: ApprovalDecision[];
   state: 'pending' | 'approved' | 'rejected';
+}
+
+// ── Approval chains (approvalChains/{chainId}) ───────────────────────────────
+
+export interface ApprovalStage {
+  name: string;
+  /** Roles (claim or planner role) eligible to decide this stage. */
+  approverRoles?: string[];
+  /** Explicit approver uids — enables exact `all`/`majority` denominators. */
+  approverUids?: string[];
+  mode: 'any' | 'all' | 'majority';
+  /**
+   * Role-based `all`/`majority` have no fixed denominator (open question in the
+   * spec). When approverUids is absent, minApprovals sets the threshold; if
+   * neither is given, the stage falls back to `any` (one approval).
+   */
+  minApprovals?: number;
+}
+
+export interface ApprovalChain {
+  id: string;
+  name: string;
+  stages: ApprovalStage[];
+  /** Transition fired (system-initiated) when the final stage approves. */
+  onApprove?: string;
+  /** Transition fired (system-initiated) when any stage is rejected. */
+  onReject?: string;
 }
 
 export interface WorkItem {
@@ -146,6 +182,12 @@ export interface TransitionActor {
   roles: string[];
   /** Space ids the actor belongs to — matched by the `spaceMember` condition. */
   spaceIds?: string[];
+  /**
+   * System-initiated transition (e.g. an approval chain firing its onReject,
+   * or a Phase 4 automation). Bypasses `conditions` (who may fire) but NOT
+   * validators — a system move still can't violate data requirements.
+   */
+  system?: boolean;
 }
 
 /**

@@ -49,5 +49,10 @@ export const TransitionSchema = z.object({
   transitionId: z.string().min(1, 'transitionId is required').trim(),
 });
 
+export const ApprovalDecisionSchema = z.object({
+  decision: z.enum(['approve', 'reject']),
+  comment: z.string().trim().max(5000).optional(),
+});
+
 export type CreatePlannerItem = z.infer<typeof CreatePlannerItemSchema>;
 export type UpdatePlannerItem = z.infer<typeof UpdatePlannerItemSchema>;

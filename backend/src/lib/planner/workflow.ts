@@ -59,12 +59,16 @@ function conditionPasses(condition: Condition, item: WorkItem, actor: Transition
   }
 }
 
-/** Every condition must pass (AND). No conditions ⇒ open to anyone. */
+/**
+ * Every condition must pass (AND). No conditions ⇒ open to anyone. A
+ * system-initiated actor bypasses conditions entirely (validators still apply).
+ */
 export function evaluateConditions(
   conditions: Condition[] | undefined,
   item: WorkItem,
   actor: TransitionActor,
 ): boolean {
+  if (actor.system) return true;
   if (!conditions || conditions.length === 0) return true;
   return conditions.every((c) => conditionPasses(c, item, actor));
 }
