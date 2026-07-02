@@ -2,14 +2,15 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, AlertCircle, Lock } from 'lucide-react';
 import { LoadingSpinner } from '../components/LoadingSpinner';
-import { plannerApi } from '../services/plannerApi';
+import { plannerApi, prettyStatus } from '../services/plannerApi';
 import type {
   ApiError,
   PlannerWorkItem,
   PlannerTransition,
   PlannerActivityEntry,
+  PlannerWorkflow,
 } from '../services/plannerApi';
-import { prettyStatus } from './Planner';
+import { StatusBadge } from './Planner';
 
 const activityLabel = (e: PlannerActivityEntry): string => {
   switch (e.kind) {
@@ -27,6 +28,7 @@ export const PlannerItem: React.FC = () => {
   const navigate = useNavigate();
 
   const [item, setItem] = useState<PlannerWorkItem | null>(null);
+  const [workflow, setWorkflow] = useState<PlannerWorkflow | null>(null);
   const [transitions, setTransitions] = useState<PlannerTransition[]>([]);
   const [activity, setActivity] = useState<PlannerActivityEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -39,14 +41,16 @@ export const PlannerItem: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const [it, trs, act] = await Promise.all([
-        plannerApi.get(id),
+      const it = await plannerApi.get(id);
+      const [trs, act, wf] = await Promise.all([
         plannerApi.transitions(id),
         plannerApi.activity(id),
+        plannerApi.config.workflow(it.workflowId).catch(() => null),
       ]);
       setItem(it);
       setTransitions(trs);
       setActivity(act);
+      setWorkflow(wf);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load work item.');
     } finally {
@@ -93,6 +97,7 @@ export const PlannerItem: React.FC = () => {
 
   const fields = item.fields ?? {};
   const fieldKeys = Object.keys(fields);
+  const statusMeta = workflow?.statuses.find((s) => s.id === item.status);
 
   return (
     <div style={{ maxWidth: 820 }}>
@@ -106,8 +111,9 @@ export const PlannerItem: React.FC = () => {
           </span>
         )}
       </div>
-      <div style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 20 }}>
-        {prettyStatus(item.status)} · {item.typeId} · {item.spaceId}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, color: 'var(--text-muted)', marginBottom: 20 }}>
+        <StatusBadge status={item.status} meta={statusMeta} />
+        <span>{item.typeId} · {item.spaceId}</span>
       </div>
 
       {error && <div style={bannerStyle}><AlertCircle size={16} /> {error}</div>}

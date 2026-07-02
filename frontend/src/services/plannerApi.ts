@@ -44,6 +44,37 @@ export interface PlannerActivityEntry {
   payload: Record<string, unknown>;
 }
 
+export interface PlannerWorkflowStatus {
+  id: string;
+  name: string;
+  category: 'todo' | 'in_progress' | 'done';
+  color: string;
+}
+
+export interface PlannerWorkflow {
+  id: string;
+  name: string;
+  statuses: PlannerWorkflowStatus[];
+  initialStatus: string;
+}
+
+export interface PlannerWorkItemType {
+  id: string;
+  name: string;
+  icon?: string;
+  workflowId: string;
+  fieldIds?: string[];
+  archived?: boolean;
+}
+
+export interface PlannerCustomField {
+  id: string;
+  label: string;
+  type: string;
+  options?: unknown[];
+  archived?: boolean;
+}
+
 export interface CreatePlannerItemInput {
   typeId: string;
   title: string;
@@ -66,8 +97,9 @@ async function token(): Promise<string> {
   return t;
 }
 
+/** Calls the planner API. `path` is relative to /api/planner (e.g. "/items/123"). */
 async function call<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
-  const res = await fetch(`${BACKEND}/api/planner/items${path}`, {
+  const res = await fetch(`${BACKEND}/api/planner${path}`, {
     ...init,
     headers: {
       'Content-Type': 'application/json',
@@ -96,7 +128,7 @@ export const plannerApi = {
     if (params.brandId) q.set('brandId', params.brandId);
     if (params.cursor) q.set('cursor', params.cursor);
     const suffix = q.toString() ? `?${q.toString()}` : '';
-    return call<{ items: PlannerWorkItem[]; nextCursor: string | null }>(`/${suffix}`);
+    return call<{ items: PlannerWorkItem[]; nextCursor: string | null }>(`/items/${suffix}`);
   },
 
   /** Follows the server cursor to load every permitted page (the list view
@@ -114,23 +146,48 @@ export const plannerApi = {
     return { items };
   },
 
-  get: (id: string) => call<{ item: PlannerWorkItem }>(`/${id}`).then((r) => r.item),
+  get: (id: string) => call<{ item: PlannerWorkItem }>(`/items/${id}`).then((r) => r.item),
 
   create: (input: CreatePlannerItemInput) =>
-    call<{ item: PlannerWorkItem }>('/', { method: 'POST', body: JSON.stringify(input) }).then((r) => r.item),
+    call<{ item: PlannerWorkItem }>('/items/', { method: 'POST', body: JSON.stringify(input) }).then((r) => r.item),
 
   update: (id: string, patch: Partial<PlannerWorkItem>) =>
-    call<{ success: boolean }>(`/${id}`, { method: 'PUT', body: JSON.stringify(patch) }),
+    call<{ success: boolean }>(`/items/${id}`, { method: 'PUT', body: JSON.stringify(patch) }),
 
-  remove: (id: string) => call<{ success: boolean }>(`/${id}`, { method: 'DELETE' }),
+  remove: (id: string) => call<{ success: boolean }>(`/items/${id}`, { method: 'DELETE' }),
 
   transitions: (id: string) =>
-    call<{ transitions: PlannerTransition[] }>(`/${id}/transitions`).then((r) => r.transitions),
+    call<{ transitions: PlannerTransition[] }>(`/items/${id}/transitions`).then((r) => r.transitions),
 
   /** Fire a transition. Throws an ApiError with `.details` on validator failure. */
   transition: (id: string, transitionId: string) =>
-    call<{ status: string }>(`/${id}/transition`, { method: 'POST', body: JSON.stringify({ transitionId }) }),
+    call<{ status: string }>(`/items/${id}/transition`, { method: 'POST', body: JSON.stringify({ transitionId }) }),
 
   activity: (id: string) =>
-    call<{ activity: PlannerActivityEntry[] }>(`/${id}/activity`).then((r) => r.activity),
+    call<{ activity: PlannerActivityEntry[] }>(`/items/${id}/activity`).then((r) => r.activity),
+
+  // ── Config (read-only) ──────────────────────────────────────────────────────
+  config: {
+    workflows: () => call<{ workflows: PlannerWorkflow[] }>('/config/workflows').then((r) => r.workflows),
+    workflow: (id: string) => call<{ workflow: PlannerWorkflow }>(`/config/workflows/${id}`).then((r) => r.workflow),
+    types: () => call<{ types: PlannerWorkItemType[] }>('/config/types').then((r) => r.types),
+    fields: () => call<{ fields: PlannerCustomField[] }>('/config/fields').then((r) => r.fields),
+  },
 };
+
+// ── Status display helpers (config-driven) ────────────────────────────────────
+
+/** Turn a status/label id ("in_progress") into a display label ("In Progress"). */
+export const prettyStatus = (s: string) =>
+  s.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+
+/** Build a lookup: workflowId → statusId → {name,color}, from a list of workflows. */
+export function buildStatusIndex(workflows: PlannerWorkflow[]): Map<string, Map<string, PlannerWorkflowStatus>> {
+  const index = new Map<string, Map<string, PlannerWorkflowStatus>>();
+  for (const wf of workflows) {
+    const inner = new Map<string, PlannerWorkflowStatus>();
+    for (const s of wf.statuses) inner.set(s.id, s);
+    index.set(wf.id, inner);
+  }
+  return index;
+}

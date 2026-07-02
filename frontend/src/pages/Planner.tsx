@@ -3,26 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { Plus, Megaphone, AlertCircle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { LoadingSpinner } from '../components/LoadingSpinner';
-import { plannerApi } from '../services/plannerApi';
-import type { PlannerWorkItem } from '../services/plannerApi';
-
-/** Turn a status/label id ("in_progress") into a display label ("In Progress"). */
-export const prettyStatus = (s: string) =>
-  s.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-
-/** Seed Campaign-workflow status colors (display only; canonical colors live on
- *  the workflow config, surfaced in the Phase 5 settings panel). */
-const STATUS_COLORS: Record<string, string> = {
-  created: '#8b8b8b',
-  planning: '#3b82f6',
-  approval: '#f59e0b',
-  approved: '#10b981',
-  inprogress: '#6366f1',
-  review: '#ec4899',
-  scheduled: '#14b8a6',
-  completed: '#22c55e',
-  archived: '#525252',
-};
+import { plannerApi, buildStatusIndex, prettyStatus } from '../services/plannerApi';
+import type { PlannerWorkItem, PlannerWorkflowStatus } from '../services/plannerApi';
 
 const PRIORITY_COLORS: Record<string, string> = {
   low: '#94a3b8',
@@ -31,25 +13,24 @@ const PRIORITY_COLORS: Record<string, string> = {
   urgent: '#ef4444',
 };
 
-const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
-  const color = STATUS_COLORS[status] || 'var(--text-muted)';
-  return (
-    <span
-      style={{
-        display: 'inline-block',
-        padding: '3px 10px',
-        borderRadius: '999px',
-        fontSize: '12px',
-        fontWeight: 700,
-        color: '#fff',
-        background: color,
-        whiteSpace: 'nowrap',
-      }}
-    >
-      {prettyStatus(status)}
-    </span>
-  );
-};
+/** Renders a status pill using the workflow-defined name/color when known,
+ *  falling back to a prettified id + neutral colour. */
+export const StatusBadge: React.FC<{ status: string; meta?: PlannerWorkflowStatus }> = ({ status, meta }) => (
+  <span
+    style={{
+      display: 'inline-block',
+      padding: '3px 10px',
+      borderRadius: '999px',
+      fontSize: '12px',
+      fontWeight: 700,
+      color: '#fff',
+      background: meta?.color || '#64748b',
+      whiteSpace: 'nowrap',
+    }}
+  >
+    {meta?.name || prettyStatus(status)}
+  </span>
+);
 
 export const Planner: React.FC = () => {
   const { role } = useAuth();
@@ -57,6 +38,7 @@ export const Planner: React.FC = () => {
   const canCreate = role === 'admin' || role === 'internal';
 
   const [items, setItems] = useState<PlannerWorkItem[]>([]);
+  const [statusIndex, setStatusIndex] = useState<Map<string, Map<string, PlannerWorkflowStatus>>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [newTitle, setNewTitle] = useState('');
@@ -66,8 +48,9 @@ export const Planner: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await plannerApi.listAll();
-      setItems(res.items);
+      const [itemsRes, workflows] = await Promise.all([plannerApi.listAll(), plannerApi.config.workflows()]);
+      setItems(itemsRes.items);
+      setStatusIndex(buildStatusIndex(workflows));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load work items.');
     } finally {
@@ -94,6 +77,8 @@ export const Planner: React.FC = () => {
       setCreating(false);
     }
   };
+
+  const statusMeta = (item: PlannerWorkItem) => statusIndex.get(item.workflowId)?.get(item.status);
 
   return (
     <div>
@@ -151,7 +136,7 @@ export const Planner: React.FC = () => {
                   )}
                 </div>
               </div>
-              <StatusBadge status={item.status} />
+              <StatusBadge status={item.status} meta={statusMeta(item)} />
             </div>
           ))}
         </div>

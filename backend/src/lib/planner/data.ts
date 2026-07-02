@@ -49,6 +49,29 @@ export async function getWorkItemType(typeId: string): Promise<WorkItemType | nu
   return { id: snap.id, ...(snap.data() as Omit<WorkItemType, 'id'>) };
 }
 
+export async function listWorkflows(): Promise<Workflow[]> {
+  const snap = await db.collection(WORKFLOWS_COLLECTION).get();
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Workflow, 'id'>) }));
+}
+
+export async function listWorkItemTypes(): Promise<WorkItemType[]> {
+  const snap = await db.collection(WORK_ITEM_TYPES_COLLECTION).get();
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<WorkItemType, 'id'>) }));
+}
+
+export interface CustomField {
+  id: string;
+  label: string;
+  type: string;
+  options?: unknown[];
+  archived?: boolean;
+}
+
+export async function listCustomFields(): Promise<CustomField[]> {
+  const snap = await db.collection('customFields').get();
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<CustomField, 'id'>) }));
+}
+
 /** The planner-role permission matrix (plannerConfig/roles). Null if unseeded. */
 export async function getRolesConfig(): Promise<RolesConfig | null> {
   const snap = await db.collection('plannerConfig').doc('roles').get();
