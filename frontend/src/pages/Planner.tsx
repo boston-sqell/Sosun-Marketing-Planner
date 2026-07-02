@@ -32,6 +32,30 @@ export const StatusBadge: React.FC<{ status: string; meta?: PlannerWorkflowStatu
   </span>
 );
 
+/** List / Board view toggle, shared by both planner views. */
+export const PlannerViewTabs: React.FC<{ active: 'list' | 'board' }> = ({ active }) => {
+  const navigate = useNavigate();
+  const tab = (key: 'list' | 'board', label: string, path: string) => (
+    <button
+      onClick={() => navigate(path)}
+      style={{
+        border: 'none', borderRadius: 8, padding: '6px 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer',
+        background: active === key ? 'var(--card)' : 'transparent',
+        color: active === key ? 'var(--text)' : 'var(--text-muted)',
+        boxShadow: active === key ? 'var(--shadow-sm)' : 'none',
+      }}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <div style={{ display: 'inline-flex', gap: 4, background: 'var(--bg)', padding: 4, borderRadius: 10, border: '1px solid var(--border)' }}>
+      {tab('list', 'List', '/planner')}
+      {tab('board', 'Board', '/planner/board')}
+    </div>
+  );
+};
+
 export const Planner: React.FC = () => {
   const { role } = useAuth();
   const navigate = useNavigate();
@@ -82,6 +106,9 @@ export const Planner: React.FC = () => {
 
   return (
     <div>
+      <div style={{ marginBottom: 16 }}>
+        <PlannerViewTabs active="list" />
+      </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 20 }}>
         <h3 style={{ fontSize: 18, fontWeight: 800, margin: 0 }}>Work Items</h3>
         {canCreate && (
