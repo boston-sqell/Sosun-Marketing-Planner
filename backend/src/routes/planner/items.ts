@@ -73,7 +73,9 @@ router.get('/', async (req: AuthedRequest, res: Response, next) => {
       status,
       brandId,
       // Non-staff only see items they're assigned to (coarse Phase 1 scoping).
+      // EXCEPT agency users, who see items according to legacy visibility rules.
       assigneeUid: isStaff(req.role) ? undefined : req.uid,
+      forAgency: req.role === 'agency' || req.role === 'external_agency',
     };
     const { items, nextCursor } = await listItems(filter, cursor);
     return res.json({ success: true, items, nextCursor });

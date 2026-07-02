@@ -110,6 +110,7 @@ export interface ListFilter {
   status?: string;
   brandId?: string;
   assigneeUid?: string;
+  forAgency?: boolean;
 }
 
 /**
@@ -142,7 +143,29 @@ export async function listItems(
     if (filter.spaceId && item.spaceId !== filter.spaceId) continue;
     if (filter.status && item.status !== filter.status) continue;
     if (filter.brandId && !(item.brandIds ?? []).includes(filter.brandId)) continue;
-    if (filter.assigneeUid && !(item.assigneeUids ?? []).includes(filter.assigneeUid)) continue;
+    
+    if (filter.forAgency) {
+      const isCampaign = item.typeId === 'campaign';
+      const isAgencyMeeting = item.typeId === 'meeting' && (item.fields?.visibility === 'agency' || item.fields?.visibility === 'external');
+      const isAgencyTask = item.typeId === 'task' && (
+        item.fields?.assignedTo === 'Agency' || 
+        item.fields?.assignedTo === 'Both' || 
+        item.fields?.visibility === 'agency' || 
+        item.fields?.visibility === 'both'
+      );
+      if (!isCampaign && !isAgencyMeeting && !isAgencyTask) continue;
+      
+      if (isCampaign && item.fields) {
+        delete item.fields.budget;
+        delete item.fields.budgetPlanned;
+        delete item.fields.budgetSpent;
+        delete item.fields.financial_summary;
+        delete item.fields.performance_metrics;
+      }
+    } else if (filter.assigneeUid && !(item.assigneeUids ?? []).includes(filter.assigneeUid)) {
+      continue;
+    }
+
     items.push(item);
   }
 
@@ -189,6 +212,15 @@ export async function getMyWork(
   ]);
 
   const assigned = assignedSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<WorkItem, 'id'>) }));
+  
+  if (roles.includes('agency') || roles.includes('external_agency')) {
+    const legacyAssignedSnap = await db.collection(WORK_ITEMS_COLLECTION).where('fields.assignedTo', 'in', ['Agency', 'Both']).limit(100).get();
+    for (const d of legacyAssignedSnap.docs) {
+      if (!assigned.some(a => a.id === d.id)) {
+        assigned.push({ id: d.id, ...(d.data() as Omit<WorkItem, 'id'>) });
+      }
+    }
+  }
 
   const chainCache = new Map<string, ApprovalChain | null>();
   const awaitingApproval: WorkItem[] = [];
