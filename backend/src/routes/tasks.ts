@@ -136,7 +136,15 @@ router.get('/', async (req: AuthedRequest, res: Response, next) => {
     // Filter permitted tasks in memory to apply condition-aware RBAC
     for (const doc of tasksSnap.docs) {
       nextCursor = doc.id;
-      const task = { ...doc.data(), id: doc.id };
+      const task = { ...doc.data(), id: doc.id } as any;
+
+      // Post-absorption the `tasks` collection is also the planner work-item
+      // store (docs/planner/spec-revisions.md §1). The legacy Tasks surface
+      // only understands task/meeting shapes; planner-native items (campaign,
+      // event, creative_task, …) are served by /api/planner/items.
+      if (task.typeId && task.typeId !== 'task' && task.typeId !== 'meeting') {
+        continue;
+      }
 
       const hasPerm = await checkPermission(role, 'task', 'view', {
         userUid,

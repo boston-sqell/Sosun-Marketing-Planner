@@ -152,6 +152,10 @@ export interface WorkItem {
   updatedAt?: string;
   completedAt?: string | null;
   archivedAt?: string | null;
+  /** Set by the absorption migration: source doc path (e.g. "campaigns/x1"). */
+  migratedFrom?: string;
+  /** Set by the absorption migration: when this doc was absorbed/upgraded. */
+  absorbedAt?: string;
 }
 
 // ── Templates (templates/{templateId}) ───────────────────────────────────────

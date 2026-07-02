@@ -44,7 +44,13 @@ service cloud.firestore {
       allow delete: if isAuth() && getRole() == 'admin';
     }
 
-    // Tasks Collection
+    // Tasks Collection — since the absorption migration this is ALSO the
+    // planner work-item store (docs/planner/spec-revisions.md §1). Legacy
+    // staff write access is retained during the transition; planner-native
+    // mutations (status, approval, locks) go exclusively through the API,
+    // whose transition endpoint is the only path that changes `status` on
+    // engine-managed items. Client write rules tighten to write:false at
+    // frontend cutover.
     match /tasks/{taskId} {
       // Direct reads blocked for agency/external_agency to enforce comment stripping (internalOnly comments)
       allow read: if isAuth() && getRole() != 'agency' && getRole() != 'external_agency';
@@ -55,6 +61,26 @@ service cloud.firestore {
       // condition-aware RBAC and whitelists the writable fields. Allowing agency
       // direct doc writes here would bypass all of that (mass-assignment).
       allow update: if isAuth() && (getRole() == 'admin' || getRole() == 'internal');
+
+      // Immutable planner audit trail (spec §11) — written exclusively by the
+      // Admin SDK inside the transition transaction. Never client-writable.
+      match /activity/{entryId} {
+        allow read: if isAuth() && getRole() != 'agency' && getRole() != 'external_agency';
+        allow write: if false;
+      }
+
+      // Storage-backed attachment index (created via the API).
+      match /attachments/{attId} {
+        allow read: if isAuth() && getRole() != 'agency' && getRole() != 'external_agency';
+        allow write: if false;
+      }
+
+      // Threaded planner comments (created via the API, which strips
+      // internal-only). Distinct from the legacy `comments[]` array field.
+      match /comments/{commentId} {
+        allow read: if isAuth() && getRole() != 'agency' && getRole() != 'external_agency';
+        allow write: if false;
+      }
     }
 
     // Assets Collection (legacy Firebase Storage file manager)
@@ -90,6 +116,8 @@ service cloud.firestore {
     // Global Activities Collection — append-only audit log. Any authed user may
     // add an entry; nobody may edit or delete one from the client (prevents
     // tampering). Backend (Admin SDK) bypasses these rules for housekeeping.
+    // NOTE (absorption §1.3): create tightens to `false` at frontend cutover,
+    // once utils/activityLogger.ts writes via the API instead of the client.
     match /activities/{activityId} {
       allow read: if isAuth();
       allow create: if isAuth();
@@ -184,30 +212,14 @@ service cloud.firestore {
     // engine, permission checks and audit writes all run server-side. See
     // docs/planner/spec-revisions.md §14.4.
 
-    // Work items — staff may read directly; agency/external_agency go through
-    // the API (which applies planner-role scoping and field stripping). No
-    // client writes: status changes ONLY via the transition endpoint.
+    // Retired Phase-1 work-item store. The absorption migration moved these
+    // docs into /tasks; sources remain (marked `movedTo`) purely as a rollback
+    // artifact until deleted with --delete-workitems. No client access.
     match /workItems/{itemId} {
-      allow read: if isAuth() && getRole() != 'agency' && getRole() != 'external_agency';
-      allow write: if false;
+      allow read, write: if false;
 
-      // Immutable audit trail (spec §11) — written exclusively by the Admin SDK
-      // inside the transition transaction. Never client-writable.
-      match /activity/{entryId} {
-        allow read: if isAuth() && getRole() != 'agency' && getRole() != 'external_agency';
-        allow write: if false;
-      }
-
-      // Storage-backed attachment index (created via the API).
-      match /attachments/{attId} {
-        allow read: if isAuth() && getRole() != 'agency' && getRole() != 'external_agency';
-        allow write: if false;
-      }
-
-      // Threaded comments (created via the API, which strips internal-only).
-      match /comments/{commentId} {
-        allow read: if isAuth() && getRole() != 'agency' && getRole() != 'external_agency';
-        allow write: if false;
+      match /{sub=**} {
+        allow read, write: if false;
       }
     }
 

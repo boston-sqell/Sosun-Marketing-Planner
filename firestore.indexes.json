@@ -58,7 +58,7 @@
       ]
     },
     {
-      "collectionGroup": "workItems",
+      "collectionGroup": "tasks",
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "spaceId", "order": "ASCENDING" },
@@ -67,7 +67,7 @@
       ]
     },
     {
-      "collectionGroup": "workItems",
+      "collectionGroup": "tasks",
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "assigneeUids", "arrayConfig": "CONTAINS" },
@@ -75,7 +75,7 @@
       ]
     },
     {
-      "collectionGroup": "workItems",
+      "collectionGroup": "tasks",
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "brandIds", "arrayConfig": "CONTAINS" },
