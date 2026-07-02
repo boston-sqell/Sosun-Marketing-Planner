@@ -22,13 +22,15 @@ service cloud.firestore {
         getRole() == 'internal'
       );
       // A user may write their own profile, but an UPDATE may never change the
-      // role field (the authoritative authz claim is managed by the backend;
-      // only an admin may change a role). Admins may write any user doc.
+      // `role` claim NOR the `plannerRole` capability field (both are authz
+      // fields managed by the backend; only an admin may change them —
+      // otherwise a user could self-grant planner permissions). Admins may
+      // write any user doc.
       allow write: if isAuth() && (
         getRole() == 'admin' ||
         (request.auth.uid == userId && (
           resource == null ||
-          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role'])
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'plannerRole'])
         ))
       );
     }
@@ -42,7 +44,13 @@ service cloud.firestore {
       allow delete: if isAuth() && getRole() == 'admin';
     }
 
-    // Tasks Collection
+    // Tasks Collection — since the absorption migration this is ALSO the
+    // planner work-item store (docs/planner/spec-revisions.md §1). Legacy
+    // staff write access is retained during the transition; planner-native
+    // mutations (status, approval, locks) go exclusively through the API,
+    // whose transition endpoint is the only path that changes `status` on
+    // engine-managed items. Client write rules tighten to write:false at
+    // frontend cutover.
     match /tasks/{taskId} {
       // Direct reads blocked for agency/external_agency to enforce comment stripping (internalOnly comments)
       allow read: if isAuth() && getRole() != 'agency' && getRole() != 'external_agency';
@@ -53,6 +61,26 @@ service cloud.firestore {
       // condition-aware RBAC and whitelists the writable fields. Allowing agency
       // direct doc writes here would bypass all of that (mass-assignment).
       allow update: if isAuth() && (getRole() == 'admin' || getRole() == 'internal');
+
+      // Immutable planner audit trail (spec §11) — written exclusively by the
+      // Admin SDK inside the transition transaction. Never client-writable.
+      match /activity/{entryId} {
+        allow read: if isAuth() && getRole() != 'agency' && getRole() != 'external_agency';
+        allow write: if false;
+      }
+
+      // Storage-backed attachment index (created via the API).
+      match /attachments/{attId} {
+        allow read: if isAuth() && getRole() != 'agency' && getRole() != 'external_agency';
+        allow write: if false;
+      }
+
+      // Threaded planner comments (created via the API, which strips
+      // internal-only). Distinct from the legacy `comments[]` array field.
+      match /comments/{commentId} {
+        allow read: if isAuth() && getRole() != 'agency' && getRole() != 'external_agency';
+        allow write: if false;
+      }
     }
 
     // Assets Collection (legacy Firebase Storage file manager)
@@ -88,6 +116,8 @@ service cloud.firestore {
     // Global Activities Collection — append-only audit log. Any authed user may
     // add an entry; nobody may edit or delete one from the client (prevents
     // tampering). Backend (Admin SDK) bypasses these rules for housekeeping.
+    // NOTE (absorption §1.3): create tightens to `false` at frontend cutover,
+    // once utils/activityLogger.ts writes via the API instead of the client.
     match /activities/{activityId} {
       allow read: if isAuth();
       allow create: if isAuth();
@@ -174,6 +204,48 @@ service cloud.firestore {
       allow create: if isAuth() && request.resource.data.uid == request.auth.uid;
       allow update: if isAuth() && resource.data.uid == request.auth.uid;
       allow delete: if isAuth() && resource.data.uid == request.auth.uid;
+    }
+
+    // ── Marketing Planner ────────────────────────────────────────────────────
+    // All planner access is server-mediated through the Admin SDK (Admin SDK
+    // bypasses these rules). Client writes are denied everywhere; the workflow
+    // engine, permission checks and audit writes all run server-side. See
+    // docs/planner/spec-revisions.md §14.4.
+
+    // Retired Phase-1 work-item store. The absorption migration moved these
+    // docs into /tasks; sources remain (marked `movedTo`) purely as a rollback
+    // artifact until deleted with --delete-workitems. No client access.
+    match /workItems/{itemId} {
+      allow read, write: if false;
+
+      match /{sub=**} {
+        allow read, write: if false;
+      }
+    }
+
+    // Engine config — readable by any authenticated staff member so the UI can
+    // render workflows/types/fields; only the backend (Admin SDK) writes it.
+    match /workflows/{workflowId} {
+      allow read: if isAuth();
+      allow write: if false;
+    }
+    match /workItemTypes/{typeId} {
+      allow read: if isAuth();
+      allow write: if false;
+    }
+    match /customFields/{fieldId} {
+      allow read: if isAuth();
+      allow write: if false;
+    }
+    match /plannerConfig/{docId} {
+      allow read: if isAuth();
+      allow write: if false;
+    }
+
+    // Transactional outbox — internal machinery, written in-transaction and
+    // drained by the backend (Admin SDK). No client access whatsoever.
+    match /plannerOutbox/{jobId} {
+      allow read, write: if false;
     }
   }
 }

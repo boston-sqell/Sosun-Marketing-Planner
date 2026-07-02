@@ -26,6 +26,10 @@ const Retail = lazy(() => import('./pages/Retail').then(m => ({ default: m.Retai
 const Budget = lazy(() => import('./pages/Budget').then(m => ({ default: m.Budget })));
 const Reports = lazy(() => import('./pages/Reports').then(m => ({ default: m.Reports })));
 const NewsSentinel = lazy(() => import('./pages/NewsSentinel').then(m => ({ default: m.NewsSentinel })));
+const Planner = lazy(() => import('./pages/Planner').then(m => ({ default: m.Planner })));
+const PlannerBoard = lazy(() => import('./pages/PlannerBoard').then(m => ({ default: m.PlannerBoard })));
+const PlannerMyWork = lazy(() => import('./pages/PlannerMyWork').then(m => ({ default: m.PlannerMyWork })));
+const PlannerItem = lazy(() => import('./pages/PlannerItem').then(m => ({ default: m.PlannerItem })));
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -82,6 +86,10 @@ const AppContent: React.FC = () => {
         return { title: 'Campaigns Planning', subtitle: 'Design and review marketing targets, channels and budgets.' };
       case '/tasks':
         return { title: 'Content Tasks & Queue', subtitle: 'Manage individual posts, checklist items and comments.' };
+      case '/planner':
+      case '/planner/board':
+      case '/planner/my-work':
+        return { title: 'Marketing Planner', subtitle: 'Workflow-driven work items — campaigns, approvals and beyond.' };
       case '/calendar':
         return { title: 'Marketing Calendar', subtitle: 'Visual content scheduling calendar (Month & List views).' };
       case '/media':
@@ -134,6 +142,10 @@ const AppContent: React.FC = () => {
                 <Route path="/dashboard" element={<Navigate to="/" replace />} />
                 <Route path="/campaigns" element={<Campaigns />} />
                 <Route path="/tasks" element={<Tasks />} />
+                <Route path="/planner" element={<Planner />} />
+                <Route path="/planner/board" element={<PlannerBoard />} />
+                <Route path="/planner/my-work" element={<PlannerMyWork />} />
+                <Route path="/planner/:id" element={<PlannerItem />} />
                 <Route path="/calendar" element={<CalendarView />} />
                 <Route path="/events" element={<Events />} />
                 <Route path="/retail" element={<Retail />} />
