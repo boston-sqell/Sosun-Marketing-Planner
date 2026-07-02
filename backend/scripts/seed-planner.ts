@@ -46,7 +46,7 @@ const CAMPAIGN_WORKFLOW: Workflow = {
       name: 'Submit for approval',
       from: ['planning'],
       to: 'approval',
-      conditions: [{ type: 'role', roles: ['admin', 'internal'] }],
+      conditions: [{ type: 'role', roles: ['admin', 'internal', 'agency'] }],
       validators: [
         { type: 'fieldRequired', fieldId: 'budget' },
         { type: 'fieldRequired', fieldId: 'objective' },
@@ -90,7 +90,7 @@ const CAMPAIGN_WORKFLOW: Workflow = {
       name: 'Send to review',
       from: ['inprogress'],
       to: 'review',
-      conditions: [{ type: 'role', roles: ['admin', 'internal'] }],
+      conditions: [{ type: 'role', roles: ['admin', 'internal', 'agency'] }],
     },
     {
       id: 'schedule',
@@ -105,7 +105,7 @@ const CAMPAIGN_WORKFLOW: Workflow = {
       name: 'Mark completed',
       from: ['scheduled', 'inprogress', 'review'],
       to: 'completed',
-      conditions: [{ type: 'role', roles: ['admin', 'internal'] }],
+      conditions: [{ type: 'role', roles: ['admin', 'internal', 'agency'] }],
       validators: [{ type: 'subtasksDone' }],
     },
     {
@@ -138,8 +138,8 @@ const SIMPLE_WORKFLOW: Workflow = {
     { id: 'done', name: 'Done', category: 'done', color: '#22c55e' },
   ],
   transitions: [
-    { id: 'start', name: 'Start', from: ['todo'], to: 'doing', conditions: [{ type: 'role', roles: ['admin', 'internal', 'creative'] }] },
-    { id: 'finish', name: 'Mark done', from: ['doing'], to: 'done', conditions: [{ type: 'role', roles: ['admin', 'internal', 'creative'] }] },
+    { id: 'start', name: 'Start', from: ['todo'], to: 'doing', conditions: [{ type: 'role', roles: ['admin', 'internal', 'creative', 'agency'] }] },
+    { id: 'finish', name: 'Mark done', from: ['doing'], to: 'done', conditions: [{ type: 'role', roles: ['admin', 'internal', 'creative', 'agency'] }] },
   ],
 };
 
@@ -226,9 +226,7 @@ const ROLES_CONFIG = {
       permissions: { createItem: true, editItem: true, comment: true, uploadFile: true },
     },
     agency: {
-      permissions: { comment: true, uploadFile: true },
-      // Agency is confined to the Creative space and only their own items.
-      spaces: { creative: { onlyAssignee: true } },
+      permissions: { editItem: true, comment: true, uploadFile: true },
     },
     readonly: {
       permissions: {},

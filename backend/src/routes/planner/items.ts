@@ -49,6 +49,20 @@ router.use(attachPlannerRole);
 
 const STAFF: AppRole[] = ['admin', 'internal'];
 const isStaff = (role?: AppRole) => !!role && STAFF.includes(role);
+const AGENCY_ROLES: AppRole[] = ['agency', 'external_agency'];
+const isAgency = (role?: AppRole) => !!role && AGENCY_ROLES.includes(role);
+
+/** Returns true when an agency user may access the given work item. */
+function agencyCanAccess(item: { typeId?: string; fields?: Record<string, unknown>; assigneeUids?: string[] }, uid: string): boolean {
+  // Campaigns are always visible to agency.
+  if (item.typeId === 'campaign') return true;
+  // Legacy tasks/meetings use the assignedTo/visibility fields.
+  const f = item.fields ?? {};
+  if (f.assignedTo === 'Agency' || f.assignedTo === 'Both') return true;
+  if (f.visibility === 'agency' || f.visibility === 'external' || f.visibility === 'both') return true;
+  // Planner-native items: use assigneeUids.
+  return (item.assigneeUids ?? []).includes(uid);
+}
 
 /**
  * Build the engine actor from the request. Workflow `role` conditions match
@@ -133,8 +147,9 @@ router.get('/:id', async (req: AuthedRequest, res: Response, next) => {
   try {
     const item = await getItem(req.params.id);
     if (!item) return res.status(404).json({ success: false, error: 'Work item not found' });
-    if (!isStaff(req.role) && !(item.assigneeUids ?? []).includes(req.uid!)) {
-      return res.status(403).json({ success: false, error: 'Forbidden' });
+    if (!isStaff(req.role)) {
+      const ok = isAgency(req.role) ? agencyCanAccess(item, req.uid!) : (item.assigneeUids ?? []).includes(req.uid!);
+      if (!ok) return res.status(403).json({ success: false, error: 'Forbidden' });
     }
     return res.json({ success: true, item });
   } catch (err) {
@@ -168,6 +183,10 @@ router.put('/:id', requirePlannerPermission('editItem'), validate(UpdatePlannerI
   try {
     const item = await getItem(req.params.id);
     if (!item) return res.status(404).json({ success: false, error: 'Work item not found' });
+    if (!isStaff(req.role)) {
+      const ok = isAgency(req.role) ? agencyCanAccess(item, req.uid!) : (item.assigneeUids ?? []).includes(req.uid!);
+      if (!ok) return res.status(403).json({ success: false, error: 'Forbidden' });
+    }
     if (item.locked) {
       return res.status(409).json({ success: false, error: 'Item is locked for editing by its workflow' });
     }
@@ -236,8 +255,9 @@ router.get('/:id/activity', async (req: AuthedRequest, res: Response, next) => {
   try {
     const item = await getItem(req.params.id);
     if (!item) return res.status(404).json({ success: false, error: 'Work item not found' });
-    if (!isStaff(req.role) && !(item.assigneeUids ?? []).includes(req.uid!)) {
-      return res.status(403).json({ success: false, error: 'Forbidden' });
+    if (!isStaff(req.role)) {
+      const ok = isAgency(req.role) ? agencyCanAccess(item, req.uid!) : (item.assigneeUids ?? []).includes(req.uid!);
+      if (!ok) return res.status(403).json({ success: false, error: 'Forbidden' });
     }
     const snap = await db
       .collection(WORK_ITEMS_COLLECTION)
