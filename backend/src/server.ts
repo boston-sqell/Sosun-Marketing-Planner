@@ -105,7 +105,7 @@ app.use(express.json());
 const MEDIA_STREAM_PATH = /^\/api\/drive\/files\/[^/]+\/(content|thumbnail)(\/|$)|^\/api\/drive\/files\/[^/]+\/revisions\/[^/]+\/content$/;
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: 1000,
   standardHeaders: true,
   legacyHeaders: false,
   // Media streaming (range requests, thumbnails) can issue many GETs for a single
