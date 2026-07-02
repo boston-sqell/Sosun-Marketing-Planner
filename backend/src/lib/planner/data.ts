@@ -21,7 +21,8 @@ import { appendActivity } from './activity';
 import { recordDecision, canDecide, ApprovalOutcome } from './approvals';
 import { selectAutomations, MAX_AUTOMATION_DEPTH } from './automations';
 import { computeDueDate } from './templates';
-import { ApprovalChain, Automation, AutomationEvent, Template } from './types';
+import { enqueue, backoffSeconds, addSeconds, OUTBOX_COLLECTION, OutboxJob, OutboxRecord } from './outbox';
+import { ApprovalChain, Automation, AutomationEvent, PostFunction, Template } from './types';
 import { RolesConfig } from './permissions';
 import { WORK_ITEMS_COLLECTION, WORKFLOWS_COLLECTION, WORK_ITEM_TYPES_COLLECTION } from './constants';
 
@@ -281,9 +282,9 @@ export async function createItem(
   await db.runTransaction(async (tx) => {
     tx.set(ref, item);
     appendActivity(tx, db, ref.id, activity);
+    // Durable, transactional deferral: itemCreated automations run in the drainer.
+    enqueue(tx, db, { type: 'automations', event: { type: 'itemCreated', typeId: type.id }, itemId: ref.id, actorUid: actor.uid, roles: actor.roles, depth }, now);
   });
-
-  await runAutomations({ type: 'itemCreated', typeId: type.id }, item, actor, now, depth);
 
   return { ok: true, item };
 }
@@ -452,27 +453,16 @@ export async function executeTransition(
 
     tx.update(ref, { ...planned.patch, updatedAt: now });
     appendActivity(tx, db, itemId, planned.activity);
+
+    // Defer side effects transactionally (spec §4 steps 7-8): async post-
+    // functions and statusEntered automations run in the outbox drainer, so a
+    // committed transition can never lose them.
+    if (planned.asyncOps.length > 0) {
+      enqueue(tx, db, { type: 'asyncOps', itemId, ops: planned.asyncOps, actorUid: actor.uid, roles: actor.roles, depth }, now);
+    }
+    enqueue(tx, db, { type: 'automations', event: { type: 'statusEntered', statusId: planned.toStatus, typeId: freshItem.typeId }, itemId, actorUid: actor.uid, roles: actor.roles, depth }, now);
     return planned;
   });
-
-  if (decision.ok && decision.asyncOps.length > 0) {
-    await dispatchAsyncOps(itemId, decision.asyncOps, actor);
-  }
-
-  // Spec §4 step 8: evaluate statusEntered automations against the post-
-  // transition item. Re-read so field-based conditions see committed state.
-  if (decision.ok) {
-    const updated = await getItem(itemId);
-    if (updated) {
-      await runAutomations(
-        { type: 'statusEntered', statusId: decision.toStatus, typeId: updated.typeId },
-        updated,
-        actor,
-        now,
-        depth,
-      );
-    }
-  }
 
   return decision;
 }
@@ -489,15 +479,132 @@ export async function executeTransition(
  * throws. The real implementation must be a durable outbox with retry, not an
  * inline call. Kept as a no-op-with-log so the engine ships honestly.
  */
-async function dispatchAsyncOps(
+/**
+ * Execute a transition's async post-functions (run by the outbox drainer).
+ * assignRole/createWorkItems now actually run; notify/webhook/archiveAssets
+ * remain logged stubs until the email/webhook channels land (spec §9).
+ */
+async function executeAsyncOps(
   itemId: string,
-  ops: import('./types').PostFunction[],
+  ops: PostFunction[],
   actor: TransitionActor,
+  now: string,
+  depth: number,
 ): Promise<void> {
+  const item = await getItem(itemId);
+  if (!item) return;
+  const ref = db.collection(WORK_ITEMS_COLLECTION).doc(itemId);
+
   for (const op of ops) {
-    // eslint-disable-next-line no-console
-    console.log(`[planner] async post-function deferred (Phase 1 stub): item=${itemId} type=${op.type} actor=${actor.uid}`);
+    switch (op.type) {
+      case 'assignRole': {
+        const uids = await getUidsByPlannerRole(op.role);
+        if (uids.length > 0) {
+          const merged = Array.from(new Set([...(item.assigneeUids ?? []), ...uids]));
+          await ref.set({ assigneeUids: merged, updatedAt: now }, { merge: true });
+        }
+        break;
+      }
+      case 'createWorkItems':
+        await createFromTemplate(
+          op.templateId,
+          { spaceId: item.spaceId, brandIds: item.brandIds, parentId: op.linkAsSubtasks ? itemId : null },
+          actor,
+          now,
+          depth + 1,
+        );
+        break;
+      case 'notify':
+      case 'webhook':
+      case 'archiveAssets':
+        // eslint-disable-next-line no-console
+        console.log(`[planner] async op ${op.type} deferred (channel stub): item=${itemId}`);
+        break;
+      default:
+        break;
+    }
   }
+}
+
+// ── Outbox drainer (spec-revisions §14.3) ────────────────────────────────────
+
+/** Execute one outbox job by dispatching to the right executor. */
+async function executeJob(job: OutboxJob, now: string): Promise<void> {
+  const actor: TransitionActor = { uid: job.actorUid, roles: job.roles };
+  switch (job.type) {
+    case 'asyncOps':
+      await executeAsyncOps(job.itemId, job.ops, actor, now, job.depth);
+      break;
+    case 'automations': {
+      const item = await getItem(job.itemId);
+      if (item) await runAutomations(job.event, item, actor, now, job.depth);
+      break;
+    }
+    case 'transition':
+      await executeTransition(job.itemId, job.transitionId, { ...actor, system: job.system }, now, job.depth);
+      break;
+  }
+}
+
+/**
+ * Drain due outbox jobs (called by the Cloud Scheduler endpoint). Claims each
+ * job (pending → processing) in a transaction so concurrent drainers don't
+ * double-run, executes it, then marks done or reschedules with backoff up to
+ * maxAttempts. At-least-once: a job may retry, so actions should be idempotent
+ * (createWorkItems is not yet — a known limitation tracked for a follow-up).
+ */
+export async function drainOutbox(
+  now: string,
+  limit = 50,
+): Promise<{ processed: number; done: number; failed: number; retried: number }> {
+  const snap = await db
+    .collection(OUTBOX_COLLECTION)
+    .where('status', '==', 'pending')
+    .where('nextAttemptAt', '<=', now)
+    .orderBy('nextAttemptAt', 'asc')
+    .limit(limit)
+    .get();
+
+  let done = 0;
+  let failed = 0;
+  let retried = 0;
+
+  for (const doc of snap.docs) {
+    const claimed = await db.runTransaction<OutboxRecord | null>(async (tx) => {
+      const fresh = await tx.get(doc.ref);
+      if (!fresh.exists) return null;
+      const rec = fresh.data() as OutboxRecord;
+      if (rec.status !== 'pending') return null;
+      tx.update(doc.ref, { status: 'processing', updatedAt: now });
+      return rec;
+    });
+    if (!claimed) continue;
+
+    try {
+      await executeJob(claimed.job, now);
+      await doc.ref.update({ status: 'done', updatedAt: now });
+      done++;
+    } catch (err: any) {
+      const attempts = (claimed.attempts ?? 0) + 1;
+      const maxAttempts = claimed.maxAttempts ?? 5;
+      const lastError = String(err?.message ?? err).slice(0, 500);
+      if (attempts >= maxAttempts) {
+        await doc.ref.update({ status: 'failed', attempts, lastError, updatedAt: now });
+        failed++;
+      } else {
+        await doc.ref.update({
+          status: 'pending',
+          attempts,
+          lastError,
+          nextAttemptAt: addSeconds(now, backoffSeconds(attempts)),
+          updatedAt: now,
+        });
+        retried++;
+      }
+    }
+  }
+
+  return { processed: snap.size, done, failed, retried };
 }
 
 // ── Automations (spec §3.7) ──────────────────────────────────────────────────
@@ -641,20 +748,17 @@ export async function executeApprovalDecision(
         comment: input.comment?.trim() || null,
       },
     });
+
+    // Chain resolution drives the workflow via a system transition, enqueued
+    // in THIS transaction so the follow-on move can't be lost: rejection bounces
+    // the item (onReject); final approval advances it (onApprove).
+    const followOn =
+      result.resolution === 'rejected' ? chain.onReject : result.resolution === 'approved' ? chain.onApprove : undefined;
+    if (followOn) {
+      enqueue(tx, db, { type: 'transition', itemId, transitionId: followOn, actorUid: input.uid, roles: input.roles, system: true, depth: 0 }, now);
+    }
     return result;
   });
-
-  // Chain resolution drives the workflow via system-initiated transitions
-  // (conditions bypassed, validators still apply). Rejection bounces the item
-  // (onReject); final approval advances it (onApprove).
-  if (outcome.ok) {
-    const sysActor = { uid: input.uid, roles: input.roles, system: true };
-    if (outcome.resolution === 'rejected' && outcome.fireTransition) {
-      await executeTransition(itemId, outcome.fireTransition, sysActor, now);
-    } else if (outcome.resolution === 'approved' && chain.onApprove) {
-      await executeTransition(itemId, chain.onApprove, sysActor, now);
-    }
-  }
 
   return outcome;
 }

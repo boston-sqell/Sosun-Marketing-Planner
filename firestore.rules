@@ -229,5 +229,11 @@ service cloud.firestore {
       allow read: if isAuth();
       allow write: if false;
     }
+
+    // Transactional outbox — internal machinery, written in-transaction and
+    // drained by the backend (Admin SDK). No client access whatsoever.
+    match /plannerOutbox/{jobId} {
+      allow read, write: if false;
+    }
   }
 }
