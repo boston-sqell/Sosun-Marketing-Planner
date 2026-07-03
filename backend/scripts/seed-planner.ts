@@ -39,7 +39,7 @@ const CAMPAIGN_WORKFLOW: Workflow = {
       name: 'Start planning',
       from: ['created'],
       to: 'planning',
-      conditions: [{ type: 'role', roles: ['admin', 'internal'] }],
+      conditions: [{ type: 'role', roles: ['admin', 'internal', 'agency'] }],
     },
     {
       id: 'submit_for_approval',
@@ -83,7 +83,7 @@ const CAMPAIGN_WORKFLOW: Workflow = {
       name: 'Begin work',
       from: ['approved'],
       to: 'inprogress',
-      conditions: [{ type: 'role', roles: ['admin', 'internal'] }],
+      conditions: [{ type: 'role', roles: ['admin', 'internal', 'agency'] }],
     },
     {
       id: 'send_to_review',

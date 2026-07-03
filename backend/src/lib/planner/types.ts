@@ -156,6 +156,36 @@ export interface WorkItem {
   migratedFrom?: string;
   /** Set by the absorption migration: when this doc was absorbed/upgraded. */
   absorbedAt?: string;
+
+  /**
+   * Legacy fields inherited from the pre-absorption `tasks` collection
+   * (routes/tasks.ts, schemas/index.ts). Not part of the Phase 1 WorkItem
+   * design and not writable through CreatePlannerItemSchema /
+   * UpdatePlannerItemSchema — `comments` is mutated only by
+   * routes/planner/agent.ts (arrayUnion), `checklist` by both agent.ts and
+   * the legacy tasks checklist-check permission path. Declared here so reads
+   * across the codebase don't need `as any` and so their real shape is
+   * documented in one place instead of inferred from call sites.
+   */
+  checklist?: ChecklistItem[];
+  comments?: WorkItemComment[];
+}
+
+export interface ChecklistItem {
+  id: string;
+  text: string;
+  done: boolean;
+}
+
+export interface WorkItemComment {
+  id: string;
+  user: string;
+  role?: string;
+  userUid?: string;
+  text: string;
+  time?: string;
+  createdAt: string;
+  internalOnly?: boolean;
 }
 
 // ── Templates (templates/{templateId}) ───────────────────────────────────────

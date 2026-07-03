@@ -67,6 +67,13 @@ const WF: Workflow = {
       to: 'planning',
       conditions: [{ type: 'assignee' }],
     },
+    {
+      id: 'reopen',
+      name: 'Reopen',
+      from: ['completed'],
+      to: 'planning',
+      conditions: [{ type: 'role', roles: ['admin', 'internal'] }],
+    },
   ],
 };
 
@@ -319,7 +326,21 @@ describe('planTransition — acceptance', () => {
   it('does not stamp completedAt for non-done statuses', () => {
     const d = planTransition(WF, item(), 'start_planning', { actor: admin, facts: facts() });
     expect(d.ok).toBe(true);
-    if (d.ok) expect(d.patch.completedAt).toBeUndefined();
+    // null, not undefined: this is an explicit clear, not an absence. Without
+    // it, reopening a done item (done → non-done) left the old completedAt in
+    // place, since only the "entering done" branch ever wrote the field.
+    if (d.ok) expect(d.patch.completedAt).toBeNull();
+  });
+
+  it('clears completedAt when leaving a done-category status', () => {
+    const d = planTransition(
+      WF,
+      item({ status: 'completed', completedAt: '2026-01-01' }),
+      'reopen',
+      { actor: admin, facts: facts() },
+    );
+    expect(d.ok).toBe(true);
+    if (d.ok) expect(d.patch.completedAt).toBeNull();
   });
 
   it('allows an assignee-gated transition for the assigned user', () => {

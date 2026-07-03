@@ -165,7 +165,8 @@ export async function listItems(
         assignedTo === 'Agency' || assignedTo === 'Both' ||
         visibility === 'agency' || visibility === 'both'
       );
-      if (!isCampaign && !isAgencyMeeting && !isAgencyTask) continue;
+      const isAssigned = !!filter.assigneeUid && (item.assigneeUids ?? []).includes(filter.assigneeUid);
+      if (!isCampaign && !isAgencyMeeting && !isAgencyTask && !isAssigned) continue;
       
       if (isCampaign && item.fields) {
         delete item.fields.budget;
@@ -355,6 +356,14 @@ export interface FromTemplateInput {
  * with parentId = root. Relative `dueInDays` become absolute dates. Reuses
  * createItem so each node gets its workflow snapshot + `created` audit entry
  * (and its own itemCreated automations, depth-guarded).
+ *
+ * `idempotencyKey`, when provided, makes retries safe. The `createWorkItems`
+ * post-function/automation action runs from the outbox drainer (at-least-once
+ * delivery — see drainOutbox), and a job that throws after creating the root
+ * but before finishing subtasks, or that succeeds but is retried anyway due
+ * to a delayed ack, would previously spawn a second full tree on every retry.
+ * The key is stamped onto the root's fields; a matching existing root short-
+ * circuits the whole call instead of creating anything.
  */
 export async function createFromTemplate(
   templateId: string,
@@ -362,9 +371,25 @@ export async function createFromTemplate(
   actor: TransitionActor,
   now: string,
   depth = 0,
+  idempotencyKey?: string,
 ): Promise<{ ok: true; root: WorkItem; subtasks: WorkItem[] } | { ok: false; httpStatus: 400; message: string }> {
   const template = await getTemplate(templateId);
   if (!template) return { ok: false, httpStatus: 400, message: `Unknown template "${templateId}".` };
+
+  if (idempotencyKey) {
+    const existing = await db
+      .collection(WORK_ITEMS_COLLECTION)
+      .where('fields._idempotencyKey', '==', idempotencyKey)
+      .limit(1)
+      .get();
+    if (!existing.empty) {
+      const rootDoc = existing.docs[0];
+      const root = { id: rootDoc.id, ...(rootDoc.data() as Omit<WorkItem, 'id'>) };
+      const subtaskSnap = await db.collection(WORK_ITEMS_COLLECTION).where('parentId', '==', root.id).get();
+      const subtasks = subtaskSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<WorkItem, 'id'>) }));
+      return { ok: true, root, subtasks };
+    }
+  }
 
   const rootRes = await createItem(
     {
@@ -374,7 +399,7 @@ export async function createFromTemplate(
       spaceId: input.spaceId,
       brandIds: input.brandIds,
       priority: template.root.priority,
-      fields: template.root.fields,
+      fields: idempotencyKey ? { ...template.root.fields, _idempotencyKey: idempotencyKey } : template.root.fields,
       parentId: input.parentId ?? null,
       dueDate: computeDueDate(now, template.root.dueInDays),
     },
@@ -430,6 +455,100 @@ export async function updateItemFields(
 
   await ref.set({ ...safe, updatedAt: now }, { merge: true });
   return { ok: true };
+}
+
+// ── Dependencies (spec §3: dependsOn/blocks — previously write-less) ────────
+
+/**
+ * Follows `dependsOn` edges from `startId` looking for `targetId`. Used to
+ * reject a dependency edge that would create a cycle (A depends on B, B
+ * (transitively) depends on A). Bounded by `visited` so a pre-existing cycle
+ * elsewhere in the graph can't cause infinite recursion.
+ */
+async function dependsOnTransitively(startId: string, targetId: string, visited = new Set<string>()): Promise<boolean> {
+  if (startId === targetId) return true;
+  if (visited.has(startId)) return false;
+  visited.add(startId);
+  const node = await getItem(startId);
+  if (!node) return false;
+  for (const depId of node.dependsOn ?? []) {
+    if (await dependsOnTransitively(depId, targetId, visited)) return true;
+  }
+  return false;
+}
+
+/**
+ * Replace an item's `dependsOn` set, maintaining the reciprocal `blocks`
+ * array on every referenced item so the two stay in sync (blocks is derived,
+ * never set directly by a client). Validates that every id exists, that the
+ * item doesn't depend on itself, and that no edge would create a cycle —
+ * `dependenciesDone` assumes a DAG, and an accidental cycle would make an
+ * item permanently un-completable.
+ */
+export async function setDependencies(
+  itemId: string,
+  dependsOn: string[],
+  actor: TransitionActor,
+  now: string,
+): Promise<{ ok: true; item: WorkItem } | { ok: false; httpStatus: 400 | 404; message: string }> {
+  const item = await getItem(itemId);
+  if (!item) return { ok: false, httpStatus: 404, message: 'Work item not found' };
+
+  const nextDeps = Array.from(new Set(dependsOn));
+  if (nextDeps.includes(itemId)) {
+    return { ok: false, httpStatus: 400, message: 'An item cannot depend on itself.' };
+  }
+
+  for (const depId of nextDeps) {
+    const dep = await getItem(depId);
+    if (!dep) return { ok: false, httpStatus: 400, message: `Dependency "${depId}" does not exist.` };
+    // A cycle exists if the candidate dependency already (transitively)
+    // depends on this item — adding the edge the other way would close the loop.
+    if (await dependsOnTransitively(depId, itemId)) {
+      return { ok: false, httpStatus: 400, message: `Adding "${depId}" as a dependency would create a cycle.` };
+    }
+  }
+
+  const prevDeps = new Set(item.dependsOn ?? []);
+  const nextDepsSet = new Set(nextDeps);
+  const added = nextDeps.filter((id) => !prevDeps.has(id));
+  const removed = [...prevDeps].filter((id) => !nextDepsSet.has(id));
+
+  const ref = db.collection(WORK_ITEMS_COLLECTION).doc(itemId);
+
+  await db.runTransaction(async (tx) => {
+    // Firestore transactions require all reads before any writes.
+    const addedRefs = added.map((id) => db.collection(WORK_ITEMS_COLLECTION).doc(id));
+    const removedRefs = removed.map((id) => db.collection(WORK_ITEMS_COLLECTION).doc(id));
+    const [addedSnaps, removedSnaps] = await Promise.all([
+      Promise.all(addedRefs.map((r) => tx.get(r))),
+      Promise.all(removedRefs.map((r) => tx.get(r))),
+    ]);
+
+    tx.update(ref, { dependsOn: nextDeps, updatedAt: now });
+
+    addedSnaps.forEach((snap, i) => {
+      if (!snap.exists) return;
+      const blocks = new Set<string>(((snap.data() as WorkItem).blocks ?? []));
+      blocks.add(itemId);
+      tx.update(addedRefs[i], { blocks: Array.from(blocks), updatedAt: now });
+    });
+    removedSnaps.forEach((snap, i) => {
+      if (!snap.exists) return;
+      const blocks = new Set<string>(((snap.data() as WorkItem).blocks ?? []));
+      blocks.delete(itemId);
+      tx.update(removedRefs[i], { blocks: Array.from(blocks), updatedAt: now });
+    });
+
+    appendActivity(tx, db, itemId, {
+      ts: now,
+      actorUid: actor.uid,
+      kind: 'fieldChanged',
+      payload: { field: 'dependsOn', added, removed },
+    });
+  });
+
+  return { ok: true, item: { ...item, dependsOn: nextDeps } };
 }
 
 // ── Transition executor (spec §4 steps 5–8) ──────────────────────────────────
@@ -535,18 +654,34 @@ export async function executeTransition(
  * assignRole/createWorkItems now actually run; notify/webhook/archiveAssets
  * remain logged stubs until the email/webhook channels land (spec §9).
  */
+/** Sends the shared webhook secret if configured; omits it (rather than a
+ *  hardcoded fallback) so an unconfigured CRON_SECRET fails closed on the
+ *  receiving end instead of authenticating with a constant baked into the
+ *  source code. */
+function webhookSecretHeaders(): Record<string, string> {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) {
+    // eslint-disable-next-line no-console
+    console.warn('[planner] CRON_SECRET is not set — outgoing webhook sent with no x-agent-secret header.');
+    return {};
+  }
+  return { 'x-agent-secret': secret };
+}
+
 async function executeAsyncOps(
   itemId: string,
   ops: PostFunction[],
   actor: TransitionActor,
   now: string,
   depth: number,
+  jobId: string,
 ): Promise<void> {
   const item = await getItem(itemId);
   if (!item) return;
   const ref = db.collection(WORK_ITEMS_COLLECTION).doc(itemId);
 
-  for (const op of ops) {
+  for (let i = 0; i < ops.length; i++) {
+    const op = ops[i];
     switch (op.type) {
       case 'assignRole': {
         const uids = await getUidsByPlannerRole(op.role);
@@ -557,16 +692,34 @@ async function executeAsyncOps(
         break;
       }
       case 'createWorkItems':
+        // Idempotency key scoped to this specific op within this specific
+        // outbox job: a retried job (at-least-once delivery) re-runs this
+        // exact call and must find its own prior output, not create a sibling
+        // tree. See createFromTemplate's idempotencyKey doc comment.
         await createFromTemplate(
           op.templateId,
           { spaceId: item.spaceId, brandIds: item.brandIds, parentId: op.linkAsSubtasks ? itemId : null },
           actor,
           now,
           depth + 1,
+          `${jobId}:asyncOps:${i}`,
         );
         break;
+      case 'webhook': {
+        fetch(op.url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...webhookSecretHeaders(),
+          },
+          body: JSON.stringify({ itemId }),
+        }).catch((err) => {
+          // eslint-disable-next-line no-console
+          console.error(`[planner] Webhook async op failed for item ${itemId} URL ${op.url}:`, err);
+        });
+        break;
+      }
       case 'notify':
-      case 'webhook':
       case 'archiveAssets':
         // eslint-disable-next-line no-console
         console.log(`[planner] async op ${op.type} deferred (channel stub): item=${itemId}`);
@@ -579,16 +732,18 @@ async function executeAsyncOps(
 
 // ── Outbox drainer (spec-revisions §14.3) ────────────────────────────────────
 
-/** Execute one outbox job by dispatching to the right executor. */
-async function executeJob(job: OutboxJob, now: string): Promise<void> {
+/** Execute one outbox job by dispatching to the right executor. `jobId` is the
+ *  outbox document id — stable across retries of the same job — used as the
+ *  idempotency key root for any create-side-effect the job triggers. */
+async function executeJob(jobId: string, job: OutboxJob, now: string): Promise<void> {
   const actor: TransitionActor = { uid: job.actorUid, roles: job.roles };
   switch (job.type) {
     case 'asyncOps':
-      await executeAsyncOps(job.itemId, job.ops, actor, now, job.depth);
+      await executeAsyncOps(job.itemId, job.ops, actor, now, job.depth, jobId);
       break;
     case 'automations': {
       const item = await getItem(job.itemId);
-      if (item) await runAutomations(job.event, item, actor, now, job.depth);
+      if (item) await runAutomations(job.event, item, actor, now, job.depth, jobId);
       break;
     }
     case 'transition':
@@ -601,8 +756,9 @@ async function executeJob(job: OutboxJob, now: string): Promise<void> {
  * Drain due outbox jobs (called by the Cloud Scheduler endpoint). Claims each
  * job (pending → processing) in a transaction so concurrent drainers don't
  * double-run, executes it, then marks done or reschedules with backoff up to
- * maxAttempts. At-least-once: a job may retry, so actions should be idempotent
- * (createWorkItems is not yet — a known limitation tracked for a follow-up).
+ * maxAttempts. At-least-once: a job may retry, so actions must be idempotent —
+ * createWorkItems now is, keyed off this outbox doc's own id (see
+ * createFromTemplate's idempotencyKey and executeJob's jobId param).
  */
 export async function drainOutbox(
   now: string,
@@ -632,7 +788,7 @@ export async function drainOutbox(
     if (!claimed) continue;
 
     try {
-      await executeJob(claimed.job, now);
+      await executeJob(doc.id, claimed.job, now);
       await doc.ref.update({ status: 'done', updatedAt: now });
       done++;
     } catch (err: any) {
@@ -671,12 +827,17 @@ export async function runAutomations(
   actor: TransitionActor,
   now: string,
   depth: number,
+  jobId: string,
 ): Promise<void> {
   if (depth >= MAX_AUTOMATION_DEPTH) return;
 
   const selected = selectAutomations(await listAutomations(), event, item);
   for (const auto of selected) {
-    await runAutomationActions(auto, item, actor, now, depth);
+    // Key includes the automation id: one event can select several
+    // automations, each potentially running its own createWorkItems — they
+    // must not share a dedup key or the second automation's tree would be
+    // mistaken for a retry of the first's.
+    await runAutomationActions(auto, item, actor, now, depth, `${jobId}:automation:${auto.id}`);
   }
 }
 
@@ -695,6 +856,7 @@ async function runAutomationActions(
   actor: TransitionActor,
   now: string,
   depth: number,
+  idempotencyKey: string,
 ): Promise<void> {
   const ref = db.collection(WORK_ITEMS_COLLECTION).doc(item.id);
   const patch: Record<string, unknown> = {};
@@ -718,10 +880,24 @@ async function runAutomationActions(
           actor,
           now,
           depth + 1,
+          idempotencyKey,
         );
         break;
+      case 'webhook': {
+        fetch(action.url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...webhookSecretHeaders(),
+          },
+          body: JSON.stringify({ itemId: item.id }),
+        }).catch((err) => {
+          // eslint-disable-next-line no-console
+          console.error(`[planner] Webhook automation action failed for item ${item.id} URL ${action.url}:`, err);
+        });
+        break;
+      }
       case 'notify':
-      case 'webhook':
         // eslint-disable-next-line no-console
         console.log(`[planner] automation ${auto.id} ${action.type} deferred (outbox stub): item=${item.id}`);
         break;

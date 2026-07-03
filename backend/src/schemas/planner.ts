@@ -49,6 +49,19 @@ export const TransitionSchema = z.object({
   transitionId: z.string().min(1, 'transitionId is required').trim(),
 });
 
+/**
+ * Replaces the full `dependsOn` set for an item. Kept as a dedicated endpoint
+ * rather than folded into UpdatePlannerItemSchema because setting it requires
+ * server-side invariants a plain field patch can't express: existence of the
+ * referenced items, no self-dependency, no cycles, and reciprocal maintenance
+ * of `blocks` on the other side of each edge (see setDependencies in data.ts).
+ */
+export const SetDependenciesSchema = z
+  .object({
+    dependsOn: z.array(z.string().min(1)).max(50, 'An item may depend on at most 50 others.'),
+  })
+  .strict();
+
 export const ApprovalDecisionSchema = z.object({
   decision: z.enum(['approve', 'reject']),
   comment: z.string().trim().max(5000).optional(),

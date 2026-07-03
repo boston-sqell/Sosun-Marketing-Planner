@@ -27,6 +27,7 @@ import {
   TransitionSchema,
   ApprovalDecisionSchema,
   FromTemplateSchema,
+  SetDependenciesSchema,
 } from '../../schemas/planner';
 import {
   createItem,
@@ -38,6 +39,7 @@ import {
   getWorkflow,
   listItems,
   updateItemFields,
+  setDependencies,
   WORK_ITEMS_COLLECTION,
 } from '../../lib/planner/data';
 import { availableTransitions } from '../../lib/planner/workflow';
@@ -166,6 +168,10 @@ router.get('/:id/transitions', async (req: AuthedRequest, res: Response, next) =
   try {
     const item = await getItem(req.params.id);
     if (!item) return res.status(404).json({ success: false, error: 'Work item not found' });
+    if (!isStaff(req.role)) {
+      const ok = isAgency(req.role) ? agencyCanAccess(item, req.uid!) : (item.assigneeUids ?? []).includes(req.uid!);
+      if (!ok) return res.status(403).json({ success: false, error: 'Forbidden' });
+    }
     const workflow = await getWorkflow(item.workflowId);
     if (!workflow) return res.status(400).json({ success: false, error: 'Item references a missing workflow' });
 
@@ -201,10 +207,43 @@ router.put('/:id', requirePlannerPermission('editItem'), validate(UpdatePlannerI
   }
 });
 
+// ── Dependencies (Gantt-view prerequisite: dependsOn had no write path) ──────
+
+router.put('/:id/dependencies', requirePlannerPermission('editItem'), validate(SetDependenciesSchema), async (req: PlannerRequest, res: Response, next) => {
+  try {
+    const item = await getItem(req.params.id);
+    if (!item) return res.status(404).json({ success: false, error: 'Work item not found' });
+    if (!isStaff(req.role)) {
+      const ok = isAgency(req.role) ? agencyCanAccess(item, req.uid!) : (item.assigneeUids ?? []).includes(req.uid!);
+      if (!ok) return res.status(403).json({ success: false, error: 'Forbidden' });
+    }
+    if (item.locked) {
+      return res.status(409).json({ success: false, error: 'Item is locked for editing by its workflow' });
+    }
+    const result = await setDependencies(req.params.id, req.body.dependsOn, actorFrom(req), nowIso());
+    if (!result.ok) return res.status(result.httpStatus).json({ success: false, error: result.message });
+    return res.json({ success: true, item: result.item });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ── Delete ───────────────────────────────────────────────────────────────────
 
 router.delete('/:id', requirePlannerPermission('deleteItem'), async (req: PlannerRequest, res: Response, next) => {
   try {
+    const item = await getItem(req.params.id);
+    if (!item) return res.status(404).json({ success: false, error: 'Work item not found' });
+    // Every other mutating route (read/edit/transition/activity) scopes
+    // non-staff access to ownership (assignee) or the agency visibility rules
+    // on top of the coarse `deleteItem` grant. This route previously relied on
+    // `deleteItem` alone — fine as long as plannerConfig/roles never grants it
+    // to a non-staff role, but that's an implicit assumption, not an enforced
+    // one, and every sibling route treats it as enforced. Matching that here.
+    if (!isStaff(req.role)) {
+      const ok = isAgency(req.role) ? agencyCanAccess(item, req.uid!) : (item.assigneeUids ?? []).includes(req.uid!);
+      if (!ok) return res.status(403).json({ success: false, error: 'Forbidden' });
+    }
     const ref = db.collection(WORK_ITEMS_COLLECTION).doc(req.params.id);
     // recursiveDelete removes the doc AND its activity/attachments/comments
     // subcollections — a plain delete() would orphan them (Firestore doesn't
@@ -220,6 +259,12 @@ router.delete('/:id', requirePlannerPermission('deleteItem'), async (req: Planne
 
 router.post('/:id/transition', validate(TransitionSchema), async (req: AuthedRequest, res: Response, next) => {
   try {
+    const item = await getItem(req.params.id);
+    if (!item) return res.status(404).json({ success: false, error: 'Work item not found' });
+    if (!isStaff(req.role)) {
+      const ok = isAgency(req.role) ? agencyCanAccess(item, req.uid!) : (item.assigneeUids ?? []).includes(req.uid!);
+      if (!ok) return res.status(403).json({ success: false, error: 'Forbidden' });
+    }
     const decision = await executeTransition(req.params.id, req.body.transitionId, actorFrom(req), nowIso());
     if (!decision.ok) {
       return res.status(decision.httpStatus).json({

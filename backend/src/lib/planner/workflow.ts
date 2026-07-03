@@ -174,8 +174,11 @@ function applyInlinePostFunctions(
   const patch: ItemPatch = { status: toStatus };
   const asyncOps: PostFunction[] = [];
 
-  // Entering a `done` status stamps completedAt; leaving it clears it.
-  if (isDoneStatus(workflow, toStatus)) patch.completedAt = facts.now;
+  // Entering a `done` status stamps completedAt; leaving it clears it. (Always
+  // set explicitly, not just on entry — otherwise reopening a done item left
+  // its old completedAt in place, which broke anything reading "is this
+  // actually complete right now" off that field instead of category/status.)
+  patch.completedAt = isDoneStatus(workflow, toStatus) ? facts.now : null;
 
   for (const fn of postFunctions ?? []) {
     if (isAsyncPostFunction(fn)) {

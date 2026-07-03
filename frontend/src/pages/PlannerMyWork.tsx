@@ -4,7 +4,8 @@ import { AlertCircle, Inbox, ClipboardCheck } from 'lucide-react';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { plannerApi, buildStatusIndex } from '../services/plannerApi';
 import type { PlannerWorkItem, PlannerWorkflowStatus } from '../services/plannerApi';
-import { PlannerViewTabs, StatusBadge } from './Planner';
+import { StatusBadge } from './Planner';
+import { PlannerViewTabs } from '../components/PlannerViewTabs';
 
 export const PlannerMyWork: React.FC = () => {
   const navigate = useNavigate();
@@ -68,7 +69,7 @@ export const PlannerMyWork: React.FC = () => {
   return (
     <div style={{ maxWidth: 820 }}>
       <div style={{ marginBottom: 16 }}>
-        <PlannerViewTabs active="mywork" />
+        <PlannerViewTabs />
       </div>
 
       {error && (

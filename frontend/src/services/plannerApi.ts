@@ -22,6 +22,8 @@ export interface PlannerWorkItem {
   labels?: string[];
   fields?: Record<string, unknown>;
   parentId?: string | null;
+  dependsOn?: string[];
+  blocks?: string[];
   startDate?: string | null;
   dueDate?: string | null;
   approval?: PlannerApprovalState | null;
@@ -29,6 +31,10 @@ export interface PlannerWorkItem {
   createdAt?: string;
   updatedAt?: string;
   completedAt?: string | null;
+  /** Legacy fields inherited from the pre-absorption `tasks` collection —
+   *  see the matching comment on backend WorkItem in lib/planner/types.ts. */
+  checklist?: { id: string; text: string; done: boolean }[];
+  comments?: { id: string; user: string; role?: string; userUid?: string; text: string; time?: string; createdAt: string; internalOnly?: boolean }[];
 }
 
 export interface PlannerTransition {
@@ -104,6 +110,11 @@ export interface CreatePlannerItemInput {
   brandIds?: string[];
   priority?: PlannerPriority;
   dueDate?: string | null;
+  startDate?: string | null;
+  parentId?: string | null;
+  assigneeUids?: string[];
+  labels?: string[];
+  fields?: Record<string, unknown>;
 }
 
 /** Error thrown by the API layer; carries field-level validator details (422). */
@@ -186,6 +197,14 @@ export const plannerApi = {
 
   remove: (id: string) => call<{ success: boolean }>(`/items/${id}`, { method: 'DELETE' }),
 
+  /** Replaces the item's full dependsOn set. The server maintains the
+   *  reciprocal `blocks` array and rejects cycles / missing ids (400). */
+  setDependencies: (id: string, dependsOn: string[]) =>
+    call<{ item: PlannerWorkItem }>(`/items/${id}/dependencies`, {
+      method: 'PUT',
+      body: JSON.stringify({ dependsOn }),
+    }).then((r) => r.item),
+
   transitions: (id: string) =>
     call<{ transitions: PlannerTransition[] }>(`/items/${id}/transitions`).then((r) => r.transitions),
 
@@ -211,6 +230,16 @@ export const plannerApi = {
     types: () => call<{ types: PlannerWorkItemType[] }>('/config/types').then((r) => r.types),
     fields: () => call<{ fields: PlannerCustomField[] }>('/config/fields').then((r) => r.fields),
     templates: () => call<{ templates: PlannerTemplateSummary[] }>('/config/templates').then((r) => r.templates),
+  },
+
+  // ── Saved Views (Phase 5) ───────────────────────────────────────────────────
+  views: {
+    list: (spaceId: string) => call<{ views: any[] }>(`/views?spaceId=${spaceId}`).then((r) => r.views),
+    create: (view: { name: string; spaceId: string; kind: string; filters?: Record<string, any>; shared?: boolean }) =>
+      call<{ view: any }>('/views/', { method: 'POST', body: JSON.stringify(view) }).then((r) => r.view),
+    update: (id: string, patch: Partial<{ name: string; filters: Record<string, any>; shared: boolean }>) =>
+      call<{ success: boolean }>(`/views/${id}`, { method: 'PUT', body: JSON.stringify(patch) }),
+    delete: (id: string) => call<{ success: boolean }>(`/views/${id}`, { method: 'DELETE' }),
   },
 };
 

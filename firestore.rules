@@ -247,5 +247,17 @@ service cloud.firestore {
     match /plannerOutbox/{jobId} {
       allow read, write: if false;
     }
+
+    // Saved views collection (Phase 5) — server-mediated CRUD via API only
+    match /plannerViews/{viewId} {
+      allow read, write: if false;
+    }
+
+    // Agent runs collection (Phase 6) — server-mediated updates; client read-only
+    match /agentRuns/{runId} {
+      allow read: if isAuth();
+      allow write: if false;
+    }
   }
 }
+

@@ -30,6 +30,9 @@ const Planner = lazy(() => import('./pages/Planner').then(m => ({ default: m.Pla
 const PlannerBoard = lazy(() => import('./pages/PlannerBoard').then(m => ({ default: m.PlannerBoard })));
 const PlannerMyWork = lazy(() => import('./pages/PlannerMyWork').then(m => ({ default: m.PlannerMyWork })));
 const PlannerItem = lazy(() => import('./pages/PlannerItem').then(m => ({ default: m.PlannerItem })));
+const PlannerWorkload = lazy(() => import('./pages/PlannerWorkload').then(m => ({ default: m.PlannerWorkload })));
+const PlannerTimeline = lazy(() => import('./pages/PlannerTimeline').then(m => ({ default: m.PlannerTimeline })));
+const PlannerDashboard = lazy(() => import('./pages/PlannerDashboard').then(m => ({ default: m.PlannerDashboard })));
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -145,6 +148,9 @@ const AppContent: React.FC = () => {
                 <Route path="/planner" element={<Planner />} />
                 <Route path="/planner/board" element={<PlannerBoard />} />
                 <Route path="/planner/my-work" element={<PlannerMyWork />} />
+                <Route path="/planner/workload" element={<PlannerWorkload />} />
+                <Route path="/planner/timeline" element={<PlannerTimeline />} />
+                <Route path="/planner/dashboard" element={<PlannerDashboard />} />
                 <Route path="/planner/:id" element={<PlannerItem />} />
                 <Route path="/calendar" element={<CalendarView />} />
                 <Route path="/events" element={<Events />} />

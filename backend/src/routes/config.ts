@@ -9,6 +9,7 @@ const CONFIG_DOC = db.collection('settings').doc('general');
 
 const DEFAULT_BRANDS = ['Sosun Fihaara', 'Sosun Cook', 'Sosun Book'];
 const DEFAULT_PLATFORMS = ['Instagram', 'TikTok', 'Facebook', 'WhatsApp Status'];
+const DEFAULT_AGENCIES = ['Greyscale'];
 
 // All config routes require an authenticated user.
 router.use(requireAuth);
@@ -24,24 +25,25 @@ function cleanList(arr: any[]): string[] {
   return out;
 }
 
-async function readConfig(): Promise<{ brands: string[]; platforms: string[] }> {
+async function readConfig(): Promise<{ brands: string[]; platforms: string[]; agencies: string[] }> {
   const snap = await CONFIG_DOC.get();
   const data = snap.exists ? snap.data()! : {};
   return {
     brands: Array.isArray(data.brands) ? data.brands : DEFAULT_BRANDS,
     platforms: Array.isArray(data.platforms) ? data.platforms : DEFAULT_PLATFORMS,
+    agencies: Array.isArray(data.agencies) ? data.agencies : DEFAULT_AGENCIES,
   };
 }
 
-/** Best-effort mirror of brands/platforms to a CONFIG tab in the spreadsheet.
+/** Best-effort mirror of config to a CONFIG tab in the spreadsheet.
  *  Returns an error string if the sheet write failed (Firestore is authoritative). */
-async function syncConfigToSheet(brands: string[], platforms: string[]): Promise<string | null> {
+async function syncConfigToSheet(brands: string[], platforms: string[], agencies: string[]): Promise<string | null> {
   try {
     await ensureSheet(SPREADSHEET_ID, 'CONFIG');
-    const max = Math.max(brands.length, platforms.length);
+    const max = Math.max(brands.length, platforms.length, agencies.length);
     const rows: string[][] = [];
-    for (let i = 0; i < max; i++) rows.push([brands[i] || '', platforms[i] || '']);
-    await writeAllRows(SPREADSHEET_ID, 'CONFIG!A1:B', ['Brands', 'Platforms'], rows);
+    for (let i = 0; i < max; i++) rows.push([brands[i] || '', platforms[i] || '', agencies[i] || '']);
+    await writeAllRows(SPREADSHEET_ID, 'CONFIG!A1:C', ['Brands', 'Platforms', 'Agencies'], rows);
     return null;
   } catch (e: any) {
     console.error('Config sheet sync failed:', e.message);
@@ -58,17 +60,18 @@ router.get('/', async (_req, res, next) => {
   }
 });
 
-// Update brands/platforms (admin only) → Firestore (authoritative) + best-effort Sheet.
+// Update config (admin only) → Firestore (authoritative) + best-effort Sheet.
 router.put('/', requireRole('admin'), async (req: AuthedRequest, res, next) => {
   try {
-    const { brands, platforms } = req.body || {};
+    const { brands, platforms, agencies } = req.body || {};
     const current = await readConfig();
     const updated = {
       brands: Array.isArray(brands) ? cleanList(brands) : current.brands,
       platforms: Array.isArray(platforms) ? cleanList(platforms) : current.platforms,
+      agencies: Array.isArray(agencies) ? cleanList(agencies) : current.agencies,
     };
     await CONFIG_DOC.set(updated, { merge: true });
-    const sheetError = await syncConfigToSheet(updated.brands, updated.platforms);
+    const sheetError = await syncConfigToSheet(updated.brands, updated.platforms, updated.agencies);
     res.json({ success: true, config: updated, sheetSynced: !sheetError, sheetError });
   } catch (e) {
     next(e);

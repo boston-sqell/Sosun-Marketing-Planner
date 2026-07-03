@@ -6,6 +6,7 @@ const BACKEND = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
 export interface AppConfig {
   brands: string[];
   platforms: string[];
+  agencies?: string[];
 }
 
 async function token(): Promise<string> {
