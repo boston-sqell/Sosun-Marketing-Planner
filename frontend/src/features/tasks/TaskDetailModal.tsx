@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { X, Edit, Trash2, Video } from 'lucide-react';
 import { tasksApi } from '../../services/tasksApi';
 import { toDisplayDate } from '../../utils/dateUtils';
-import type { TaskData, UserItem, ChecklistItem, CommentItem } from '../../types';
+import type { TaskData, UserItem, ChecklistItem } from '../../types';
 import { logActivity } from '../../utils/activityLogger';
 
 const STATUS_OPTIONS = [
@@ -104,24 +104,19 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
 
   const handleAddComment = async () => {
     if (!newComment.trim()) return;
-    const comment: CommentItem = {
-      id: Date.now().toString(),
-      user: profileName,
-      role,
-      text: newComment.trim(),
-      time: new Date().toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })
-    };
-    const list = task.comments || [];
-    const newList = [...list, comment];
-    
+    const text = newComment.trim();
     setNewComment('');
-    const updated = { ...task, comments: newList };
-    onTaskUpdated(updated);
     try {
-      await tasksApi.update(task.id, { comments: newList });
+      // Route through the dedicated endpoint, which performs a Firestore
+      // arrayUnion server-side. A full-array PUT would clobber internal-only
+      // comments (which are stripped from agency reads) — permanently deleting
+      // them the moment an agency user posts a reply.
+      const saved = await tasksApi.addComment(task.id, text);
+      onTaskUpdated({ ...task, comments: [...(task.comments || []), saved] });
     } catch (err) {
       console.error(err);
-      onTaskUpdated(task); // revert
+      alert(err instanceof Error ? err.message : 'Failed to add comment');
+      setNewComment(text); // restore the draft so the user doesn't lose it
     }
   };
 

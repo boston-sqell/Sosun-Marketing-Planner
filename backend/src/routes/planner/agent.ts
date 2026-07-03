@@ -80,8 +80,13 @@ async function runAgentJob(itemId: string) {
       parent = await getItem(item.parentId);
     }
 
-    // 4. Load comments from task document array
-    const comments = item.comments || [];
+    // 4. Load comments from task document array. Strip internal-only comments so
+    // they can't leak to agency partners through the agent's prose — the agent's
+    // own reply is written back as a NON-internal comment (visible to agency),
+    // and it may quote/summarise its context verbatim.
+    const comments = (item.comments || []).filter(
+      (c: any) => c.internalOnly !== true && c.internal_only !== true
+    );
 
     // 5. Construct prompt
     const prompt = `You are the Campaign Agent AI teammate, an expert marketing assistant.

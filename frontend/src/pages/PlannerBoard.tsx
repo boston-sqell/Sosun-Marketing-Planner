@@ -11,6 +11,20 @@ import { db } from '../firebase/config';
 import { mockUsers } from '../mockData';
 import type { UserItem } from '../types';
 import { useDraggable, useDroppable, DndContext, useSensors, useSensor, PointerSensor } from '@dnd-kit/core';
+import { useAuth } from '../context/AuthContext';
+import { TaskFormModal } from '../features/tasks/TaskFormModal';
+import { TaskDetailModal } from '../features/tasks/TaskDetailModal';
+import { useTaskWorkflow } from '../features/tasks/useTaskWorkflow';
+import { useBrandScope } from '../context/BrandScopeContext';
+
+// The absorbed Tasks board collapses ~20 legacy statuses into 3 category
+// columns. Dropping a card resolves to the first allowed transition whose
+// target status shares the column's category.
+const TASK_BOARD_COLUMNS: PlannerWorkflowStatus[] = [
+  { id: 'todo', name: 'To Do', category: 'todo', color: '#64748b' },
+  { id: 'in_progress', name: 'In Progress', category: 'in_progress', color: '#f59e0b' },
+  { id: 'done', name: 'Done', category: 'done', color: '#16a34a' },
+];
 
 const PRIORITY_COLORS: Record<string, string> = {
   low: '#94a3b8',
@@ -91,15 +105,18 @@ const KanbanCard: React.FC<{
   usersList: UserItem[];
   workflowStatus: PlannerWorkflowStatus | undefined;
   onClick: () => void;
-}> = ({ item, usersList, workflowStatus, onClick }) => {
+  dragDisabled?: boolean;
+}> = ({ item, usersList, workflowStatus, onClick, dragDisabled }) => {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: item.id,
+    disabled: dragDisabled,
   });
 
   const style: React.CSSProperties = {
     transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
     opacity: isDragging ? 0.35 : 1,
     zIndex: isDragging ? 999 : 1,
+    cursor: dragDisabled ? 'pointer' : 'grab',
   };
 
   const isOverdue = item.dueDate && item.dueDate < todayStr && workflowStatus?.category !== 'done';
@@ -224,6 +241,9 @@ const KanbanColumn: React.FC<{
 export const PlannerBoard: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { profile } = useAuth();
+  const { brands: brandCatalog } = useBrandScope();
+  const role = profile?.role || 'internal';
   const [items, setItems] = useState<PlannerWorkItem[]>([]);
   const [workflows, setWorkflows] = useState<PlannerWorkflow[]>([]);
   const [activeWfId, setActiveWfId] = useState<string | null>(null);
@@ -316,6 +336,27 @@ export const PlannerBoard: React.FC = () => {
   }, []);
 
   const activeWf = useMemo(() => workflows.find((w) => w.id === activeWfId) ?? null, [workflows, activeWfId]);
+  const isTaskWf = activeWfId === 'wf_task';
+  const isAgencyRole = role === 'agency' || role === 'external_agency';
+
+  const statusMetaMap = useMemo(() => {
+    const map = new Map<string, PlannerWorkflowStatus>();
+    if (activeWf) {
+      for (const s of activeWf.statuses) map.set(s.id, s);
+    }
+    return map;
+  }, [activeWf]);
+
+  // Columns rendered on the board: real workflow statuses, or (for the absorbed
+  // Tasks workflow) 3 synthetic category columns.
+  const boardColumns = isTaskWf ? TASK_BOARD_COLUMNS : (activeWf?.statuses ?? []);
+
+  const wf = useTaskWorkflow({
+    role,
+    profileName: profile?.displayName || 'User',
+    usersList,
+    onRefresh: load,
+  });
 
   // Sync filters if a saved view is active
   const activeSavedView = useMemo(() => savedViews.find(v => v.id === viewId), [savedViews, viewId]);
@@ -333,8 +374,8 @@ export const PlannerBoard: React.FC = () => {
   const itemsByStatus = useMemo(() => {
     const map = new Map<string, PlannerWorkItem[]>();
     if (!activeWf) return map;
-    for (const s of activeWf.statuses) map.set(s.id, []);
-    
+    for (const c of boardColumns) map.set(c.id, []);
+
     // Filter items
     const filtered = items.filter(it => {
       if (it.workflowId !== activeWf.id) return false;
@@ -346,10 +387,13 @@ export const PlannerBoard: React.FC = () => {
     });
 
     for (const it of filtered) {
-      (map.get(it.status) ?? map.set(it.status, []).get(it.status)!).push(it);
+      // For the absorbed Tasks board, bucket by the status's category so the
+      // ~20 legacy statuses collapse into the 3 category columns.
+      const key = isTaskWf ? (statusMetaMap.get(it.status)?.category ?? 'todo') : it.status;
+      (map.get(key) ?? map.set(key, []).get(key)!).push(it);
     }
     return map;
-  }, [items, activeWf, filterBrand, filterStatus, filterAssignee, filterLabel]);
+  }, [items, activeWf, isTaskWf, boardColumns, statusMetaMap, filterBrand, filterStatus, filterAssignee, filterLabel]);
 
   // Extract unique labels
   const labelOptions = useMemo(() => {
@@ -431,33 +475,46 @@ export const PlannerBoard: React.FC = () => {
     const { active, over } = event;
     setDraggingId(null);
     setAllowedStatuses([]);
-    
-    if (!over) return;
-    
-    const itemId = String(active.id);
-    const targetStatus = String(over.id);
-    const item = items.find((i) => i.id === itemId);
-    if (!item || item.status === targetStatus) return;
 
-    // Optimistic Update
-    const previousItems = [...items];
-    setItems((prev) =>
-      prev.map((i) => (i.id === itemId ? { ...i, status: targetStatus } : i))
-    );
+    if (!over) return;
+
+    const itemId = String(active.id);
+    const dropId = String(over.id); // status id, or (wf_task) a category id
+    const item = items.find((i) => i.id === itemId);
+    if (!item) return;
+
+    // Agency users can't run transitions on legacy tasks — dragging is disabled,
+    // but guard the drop path too.
+    if (isTaskWf && isAgencyRole) return;
+
+    // No-op drop onto the current column.
+    if (isTaskWf) {
+      if (statusMetaMap.get(item.status)?.category === dropId) return;
+    } else if (item.status === dropId) {
+      return;
+    }
 
     setDropBusy(true);
     setError(null);
     setNotice(null);
 
+    const previousItems = [...items];
     try {
       const available = await plannerApi.transitions(itemId);
-      const match = available.find((t) => t.to === targetStatus);
+      // For the category board, resolve to the first allowed transition whose
+      // target status belongs to the dropped column's category.
+      const match = isTaskWf
+        ? available.find((t) => statusMetaMap.get(t.to)?.category === dropId)
+        : available.find((t) => t.to === dropId);
+
       if (!match) {
-        setItems(previousItems);
-        const name = activeWf?.statuses.find((s) => s.id === targetStatus)?.name ?? targetStatus;
-        setNotice(`No available move from "${item.title}" to ${name}.`);
+        const colName = boardColumns.find((s) => s.id === dropId)?.name ?? dropId;
+        setNotice(`No available move from "${item.title}" to ${colName}.`);
         return;
       }
+
+      // Optimistic update to the resolved target status.
+      setItems((prev) => prev.map((i) => (i.id === itemId ? { ...i, status: match.to } : i)));
       await plannerApi.transition(itemId, match.id);
       await load();
     } catch (err) {
@@ -472,14 +529,6 @@ export const PlannerBoard: React.FC = () => {
       setDropBusy(false);
     }
   };
-
-  const statusMetaMap = useMemo(() => {
-    const map = new Map<string, PlannerWorkflowStatus>();
-    if (activeWf) {
-      for (const s of activeWf.statuses) map.set(s.id, s);
-    }
-    return map;
-  }, [activeWf]);
 
   return (
     <div>
@@ -547,33 +596,77 @@ export const PlannerBoard: React.FC = () => {
       ) : (
         <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
           <div style={{ display: 'flex', gap: 14, overflowX: 'auto', paddingBottom: 16, opacity: dropBusy ? 0.7 : 1 }}>
-            {activeWf.statuses.map((s) => {
-              const colItems = itemsByStatus.get(s.id) || [];
-              const isCurrentCol = draggingId && items.find(i => i.id === draggingId)?.status === s.id;
-              const isAllowed = isCurrentCol || allowedStatuses.includes(s.id);
-              const isDimmed = !!draggingId && !fetchingAllowed && !isAllowed;
-
-              return (
-                <KanbanColumn key={s.id} status={s} isDimmed={isDimmed} itemCount={colItems.length}>
-                  {colItems.map((it) => (
-                    <KanbanCard
-                      key={it.id}
-                      item={it}
-                      usersList={usersList}
-                      workflowStatus={statusMetaMap.get(it.status)}
-                      onClick={() => navigate(`/planner/${it.id}`)}
-                    />
-                  ))}
-                  {colItems.length === 0 && (
-                    <div style={{ flex: 1, border: '1px dashed var(--border)', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px 8px', color: 'var(--text-muted)', fontSize: 12, fontStyle: 'italic' }}>
-                      Drop items here
-                    </div>
-                  )}
-                </KanbanColumn>
+            {(() => {
+              const draggingItem = draggingId ? items.find(i => i.id === draggingId) : undefined;
+              const draggingCategory = draggingItem ? statusMetaMap.get(draggingItem.status)?.category : undefined;
+              // For the category board, an item may move to any category reachable
+              // via an allowed transition.
+              const allowedCategories = new Set(
+                allowedStatuses.map((sid) => statusMetaMap.get(sid)?.category).filter(Boolean) as string[]
               );
-            })}
+              const dragDisabled = isTaskWf && isAgencyRole;
+
+              return boardColumns.map((s) => {
+                const colItems = itemsByStatus.get(s.id) || [];
+                const isCurrentCol = isTaskWf
+                  ? draggingCategory === s.id
+                  : (draggingId && draggingItem?.status === s.id);
+                const isAllowed = isCurrentCol || (isTaskWf ? allowedCategories.has(s.id) : allowedStatuses.includes(s.id));
+                const isDimmed = !!draggingId && !fetchingAllowed && !isAllowed;
+
+                return (
+                  <KanbanColumn key={s.id} status={s} isDimmed={isDimmed} itemCount={colItems.length}>
+                    {colItems.map((it) => (
+                      <KanbanCard
+                        key={it.id}
+                        item={it}
+                        usersList={usersList}
+                        workflowStatus={statusMetaMap.get(it.status)}
+                        dragDisabled={dragDisabled}
+                        onClick={() => (isTaskWf ? wf.openDetailById(it.id) : navigate(`/planner/${it.id}`))}
+                      />
+                    ))}
+                    {colItems.length === 0 && (
+                      <div style={{ flex: 1, border: '1px dashed var(--border)', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px 8px', color: 'var(--text-muted)', fontSize: 12, fontStyle: 'italic' }}>
+                        Drop items here
+                      </div>
+                    )}
+                  </KanbanColumn>
+                );
+              });
+            })()}
           </div>
         </DndContext>
+      )}
+
+      {/* Absorbed Tasks board reuses the legacy create/edit + detail modals. */}
+      {isTaskWf && (
+        <>
+          <TaskFormModal
+            isOpen={wf.isModalOpen}
+            onClose={wf.closeForm}
+            taskToEdit={wf.editingTask}
+            onSave={wf.handleSave}
+            brandCatalog={brandCatalog}
+            usersList={usersList}
+          />
+          {wf.selectedTask && (
+            <TaskDetailModal
+              isOpen={wf.isDetailOpen}
+              onClose={wf.closeDetail}
+              task={wf.selectedTask}
+              onEdit={wf.handleOpenEdit}
+              onDelete={(id) => wf.handleDelete(id)}
+              role={role}
+              usersList={usersList}
+              profileName={profile?.displayName || 'Unknown'}
+              onTaskUpdated={(updatedTask) => {
+                wf.setSelectedTask(updatedTask);
+                setItems(prev => prev.map(i => (i.id === updatedTask.id ? { ...i, ...updatedTask } as PlannerWorkItem : i)));
+              }}
+            />
+          )}
+        </>
       )}
     </div>
   );

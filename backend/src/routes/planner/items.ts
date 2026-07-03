@@ -106,6 +106,8 @@ router.get('/', async (req: AuthedRequest, res: Response, next) => {
       forAgency: req.role === 'agency' || req.role === 'external_agency',
     };
     const { items, nextCursor } = await listItems(filter, cursor);
+    // Agency users must never see internal-only commentary (mirrors routes/tasks.ts).
+    for (const it of items) stripInternalComments(it, req.role || 'agency');
     return res.json({ success: true, items, nextCursor });
   } catch (err) {
     next(err);
@@ -118,6 +120,9 @@ router.get('/', async (req: AuthedRequest, res: Response, next) => {
 router.get('/my-work', async (req: PlannerRequest, res: Response, next) => {
   try {
     const { assigned, awaitingApproval } = await getMyWork(req.uid!, actorFrom(req).roles);
+    // Strip internal-only comments for agency users on both result buckets.
+    for (const it of assigned) stripInternalComments(it, req.role || 'agency');
+    for (const it of awaitingApproval) stripInternalComments(it, req.role || 'agency');
     return res.json({ success: true, assigned, awaitingApproval });
   } catch (err) {
     next(err);
@@ -165,6 +170,7 @@ router.get('/:id', async (req: AuthedRequest, res: Response, next) => {
       const ok = isAgency(req.role) ? agencyCanAccess(item, req.uid!) : (item.assigneeUids ?? []).includes(req.uid!);
       if (!ok) return res.status(403).json({ success: false, error: 'Forbidden' });
     }
+    stripInternalComments(item, req.role || 'agency');
     return res.json({ success: true, item });
   } catch (err) {
     next(err);

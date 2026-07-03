@@ -11,6 +11,7 @@ import { mockUsers } from '../mockData';
 import type { UserItem } from '../types';
 import { PlannerViewTabs } from '../components/PlannerViewTabs';
 import { PlannerFilters } from '../components/PlannerFilters';
+import { TaskWorkflowList } from '../features/tasks/TaskWorkflowList';
 
 const PRIORITY_COLORS: Record<string, string> = {
   low: '#94a3b8',
@@ -65,6 +66,7 @@ export const Planner: React.FC = () => {
   const [savedViews, setSavedViews] = useState<any[]>([]);
   const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const viewId = searchParams.get('viewId');
+  const newDate = searchParams.get('newDate');
 
   const loadViews = async () => {
     try {
@@ -127,6 +129,14 @@ export const Planner: React.FC = () => {
   }, []);
 
   const activeWf = useMemo(() => workflows.find((w) => w.id === activeWfId) ?? null, [workflows, activeWfId]);
+
+  // Deep link from the calendar / legacy /tasks redirect (?newDate=YYYY-MM-DD):
+  // switch to the absorbed Tasks workflow so TaskWorkflowList opens the creator.
+  useEffect(() => {
+    if (newDate && workflows.some((w) => w.id === 'wf_task')) {
+      setActiveWfId('wf_task');
+    }
+  }, [newDate, workflows]);
 
   // Sync filters if a saved view is active
   const activeSavedView = useMemo(() => savedViews.find(v => v.id === viewId), [savedViews, viewId]);
@@ -502,6 +512,10 @@ export const Planner: React.FC = () => {
         </div>
       </div>
 
+      {activeWfId === 'wf_task' ? (
+        <TaskWorkflowList newDate={newDate} />
+      ) : (
+      <>
       <PlannerFilters
         filtersOpen={filtersOpen}
         setFiltersOpen={setFiltersOpen}
@@ -555,6 +569,8 @@ export const Planner: React.FC = () => {
             </div>
           )}
         </div>
+      )}
+      </>
       )}
     </div>
   );

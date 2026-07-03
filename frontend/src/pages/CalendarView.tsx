@@ -329,7 +329,11 @@ export const CalendarView: React.FC = () => {
                             const y = selectedCellDate.getFullYear();
                             const m = String(selectedCellDate.getMonth() + 1).padStart(2, '0');
                             const d = String(selectedCellDate.getDate()).padStart(2, '0');
-                            window.location.href = `/tasks?newDate=${y}-${m}-${d}`;
+                            // Once Tasks & Queue is absorbed into the planner, deep-link
+                            // straight to /planner/tasks (App.tsx caches this flag).
+                            const absorbed = sessionStorage.getItem('tasksAbsorbed') === 'true';
+                            const base = absorbed ? '/planner/tasks' : '/tasks';
+                            window.location.href = `${base}?newDate=${y}-${m}-${d}`;
                           }}
                           style={{ fontSize: '13px', padding: '8px 16px' }}
                         >
