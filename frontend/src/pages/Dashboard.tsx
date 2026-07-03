@@ -229,10 +229,16 @@ export const Dashboard: React.FC = () => {
   };
 
   const todaysTasks = useMemo(() => {
-    const sorted = [...scopedTasks].sort((a, b) => {
-      const termA = (a.isTerminal || a.statusPhase === 'terminal') ? 1 : 0;
-      const termB = (b.isTerminal || b.statusPhase === 'terminal') ? 1 : 0;
-      if (termA !== termB) return termA - termB;
+    // Only show active tasks in the queue (exclude terminal, completed, and meetings)
+    const activeTasks = scopedTasks.filter(t => {
+      if (t.isTerminal || t.statusPhase === 'terminal') return false;
+      const s = (t.status || '').toLowerCase();
+      if (s === 'completed' || s === 'published' || s === 'cancelled') return false;
+      if (t.type === 'meeting') return false;
+      return true;
+    });
+
+    const sorted = [...activeTasks].sort((a, b) => {
       const dateA = a.createdAt || '';
       const dateB = b.createdAt || '';
       return dateB.localeCompare(dateA);
