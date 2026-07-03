@@ -45,7 +45,7 @@ describe('buildLegacyTaskWorkflow', () => {
     expect(wf.initialStatus).toBe(DEFAULT_LEGACY_STATUS);
     const ids = wf.statuses.map((s) => s.id);
     expect(ids).toContain('In Progress');
-    expect(ids).toContain('To Do');
+    expect(ids).toContain('Idea');
     expect(wf.statuses).toHaveLength(LEGACY_STATUSES.length);
     for (const s of wf.statuses) expect(s.id).toBe(s.name);
   });

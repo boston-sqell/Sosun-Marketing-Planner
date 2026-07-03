@@ -490,7 +490,7 @@ export const PlannerBoard: React.FC = () => {
           {/* Layout Toggle */}
           <div style={{ display: 'flex', background: 'var(--bg)', padding: 4, borderRadius: 8, border: '1px solid var(--border)' }}>
             <button 
-               onClick={() => navigate('/planner')} 
+               onClick={() => navigate('/planner/tasks')} 
                style={{ background: 'transparent', color: 'var(--text-muted)', border: 'none', padding: '4px 12px', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>
                List
             </button>

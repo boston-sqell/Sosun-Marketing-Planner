@@ -354,6 +354,9 @@ router.put('/:id', validate(UpdateTaskSchema), async (req: AuthedRequest, res: R
       };
     } else if (isChecklistUpdate) {
       writePatch = { checklist: patch.checklist };
+      if (typeof patch.progress === 'number') {
+        writePatch.progress = patch.progress;
+      }
     } else {
       // Non-privileged general edit was already rejected above; defensive default.
       return res.status(403).json({ success: false, error: 'Forbidden: cannot edit this task' });

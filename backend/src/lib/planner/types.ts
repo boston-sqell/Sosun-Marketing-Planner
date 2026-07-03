@@ -212,7 +212,8 @@ export interface Template {
 
 export type AutomationTrigger =
   | { type: 'statusEntered'; statusId: string; typeIds?: string[] }
-  | { type: 'itemCreated'; typeIds?: string[] };
+  | { type: 'itemCreated'; typeIds?: string[] }
+  | { type: 'timePeriod'; cron?: string; intervalDays?: number; templateId: string; spaceId: string; brandIds?: string[] };
 
 export type AutomationCondition = { type: 'fieldEquals'; fieldId: string; value: unknown };
 
@@ -222,7 +223,8 @@ export type AutomationAction =
   | { type: 'assignRole'; role: string }
   | { type: 'createWorkItems'; templateId: string; linkAsSubtasks?: boolean }
   | { type: 'notify'; audience: string; template: string }
-  | { type: 'webhook'; url: string };
+  | { type: 'webhook'; url: string }
+  | { type: 'aiSetField'; fieldId: string; instruction: string };
 
 export interface Automation {
   id: string;

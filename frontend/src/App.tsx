@@ -32,7 +32,6 @@ const PlannerMyWork = lazy(() => import('./pages/PlannerMyWork').then(m => ({ de
 const PlannerItem = lazy(() => import('./pages/PlannerItem').then(m => ({ default: m.PlannerItem })));
 const PlannerWorkload = lazy(() => import('./pages/PlannerWorkload').then(m => ({ default: m.PlannerWorkload })));
 const PlannerTimeline = lazy(() => import('./pages/PlannerTimeline').then(m => ({ default: m.PlannerTimeline })));
-const PlannerDashboard = lazy(() => import('./pages/PlannerDashboard').then(m => ({ default: m.PlannerDashboard })));
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -90,8 +89,9 @@ const AppContent: React.FC = () => {
       case '/tasks':
         return { title: 'Content Tasks & Queue', subtitle: 'Manage individual posts, checklist items and comments.' };
       case '/planner':
+        return { title: 'My Workspace', subtitle: 'Your to-dos, assigned work and approvals — all in one place.' };
+      case '/planner/tasks':
       case '/planner/board':
-      case '/planner/my-work':
         return { title: 'Marketing Planner', subtitle: 'Workflow-driven work items — campaigns, approvals and beyond.' };
       case '/calendar':
         return { title: 'Marketing Calendar', subtitle: 'Visual content scheduling calendar (Month & List views).' };
@@ -145,12 +145,16 @@ const AppContent: React.FC = () => {
                 <Route path="/dashboard" element={<Navigate to="/" replace />} />
                 <Route path="/campaigns" element={<Campaigns />} />
                 <Route path="/tasks" element={<Tasks />} />
-                <Route path="/planner" element={<Planner />} />
+                {/* /planner is the per-user workspace; the team-wide list moved to /planner/tasks.
+                    Old bookmarks (/planner/my-work, /planner/calendar, /planner/dashboard) redirect. */}
+                <Route path="/planner" element={<PlannerMyWork />} />
+                <Route path="/planner/tasks" element={<Planner />} />
                 <Route path="/planner/board" element={<PlannerBoard />} />
-                <Route path="/planner/my-work" element={<PlannerMyWork />} />
+                <Route path="/planner/my-work" element={<Navigate to="/planner" replace />} />
                 <Route path="/planner/workload" element={<PlannerWorkload />} />
                 <Route path="/planner/timeline" element={<PlannerTimeline />} />
-                <Route path="/planner/dashboard" element={<PlannerDashboard />} />
+                <Route path="/planner/dashboard" element={<Navigate to="/" replace />} />
+                <Route path="/planner/calendar" element={<Navigate to="/calendar" replace />} />
                 <Route path="/planner/:id" element={<PlannerItem />} />
                 <Route path="/calendar" element={<CalendarView />} />
                 <Route path="/events" element={<Events />} />

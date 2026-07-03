@@ -102,6 +102,18 @@ export interface PlannerTemplateSummary {
   name: string;
 }
 
+export interface PersonalTodo {
+  id: string;
+  text: string;
+  done: boolean;
+  dueDate?: string | null;
+  list?: 'todo' | 'backlog' | 'draft' | null;
+  taskId?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  completedAt?: string | null;
+}
+
 export interface CreatePlannerItemInput {
   typeId: string;
   title: string;
@@ -230,6 +242,16 @@ export const plannerApi = {
     types: () => call<{ types: PlannerWorkItemType[] }>('/config/types').then((r) => r.types),
     fields: () => call<{ fields: PlannerCustomField[] }>('/config/fields').then((r) => r.fields),
     templates: () => call<{ templates: PlannerTemplateSummary[] }>('/config/templates').then((r) => r.templates),
+  },
+
+  // ── Personal to-dos (My Workspace) ──────────────────────────────────────────
+  todos: {
+    list: () => call<{ todos: PersonalTodo[] }>('/todos/').then((r) => r.todos),
+    create: (text: string, dueDate?: string | null, list?: 'todo' | 'backlog' | 'draft', taskId?: string | null) =>
+      call<{ todo: PersonalTodo }>('/todos/', { method: 'POST', body: JSON.stringify({ text, dueDate: dueDate ?? null, list: list ?? 'todo', taskId: taskId ?? null }) }).then((r) => r.todo),
+    update: (id: string, patch: Partial<Pick<PersonalTodo, 'text' | 'done' | 'dueDate' | 'list' | 'taskId'>>) =>
+      call<{ success: boolean }>(`/todos/${id}`, { method: 'PUT', body: JSON.stringify(patch) }),
+    delete: (id: string) => call<{ success: boolean }>(`/todos/${id}`, { method: 'DELETE' }),
   },
 
   // ── Saved Views (Phase 5) ───────────────────────────────────────────────────

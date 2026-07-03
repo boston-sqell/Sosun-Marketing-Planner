@@ -74,5 +74,29 @@ export const FromTemplateSchema = z.object({
   titleOverride: z.string().trim().optional(),
 });
 
+/**
+ * Personal to-dos (My Workspace). Private per-user scratch items — NOT work
+ * items: no workflow, no assignees, no approvals. Scoped to the caller's uid
+ * server-side, so no uid field is accepted from the client.
+ */
+export const CreatePersonalTodoSchema = z
+  .object({
+    text: z.string().min(1, 'text is required').trim().max(500),
+    dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD').nullable().default(null),
+    list: z.enum(['todo', 'backlog', 'draft']).nullable().default('todo'),
+    taskId: z.string().nullable().default(null),
+  })
+  .strict();
+
+export const UpdatePersonalTodoSchema = z
+  .object({
+    text: z.string().trim().min(1).max(500).optional(),
+    done: z.boolean().optional(),
+    dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+    list: z.enum(['todo', 'backlog', 'draft']).nullable().optional(),
+    taskId: z.string().nullable().optional(),
+  })
+  .strict();
+
 export type CreatePlannerItem = z.infer<typeof CreatePlannerItemSchema>;
 export type UpdatePlannerItem = z.infer<typeof UpdatePlannerItemSchema>;

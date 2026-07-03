@@ -36,9 +36,9 @@ export const PlannerViewTabs: React.FC = () => {
     try {
       await plannerApi.views.delete(id);
       loadViews();
-      // If we deleted the active view, navigate to base page
+      // If we deleted the active view, navigate to the base list page
       if (activeViewId === id) {
-        navigate('/planner');
+        navigate('/planner/tasks');
       }
     } catch (err) {
       console.error(err);
@@ -65,7 +65,7 @@ export const PlannerViewTabs: React.FC = () => {
 
   const renderSavedTab = (view: any) => {
     const isActive = activeViewId === view.id;
-    let targetPath = '/planner';
+    let targetPath = '/planner/tasks';
     if (view.kind === 'board') targetPath = '/planner/board';
     else if (view.kind === 'timeline') targetPath = '/planner/timeline';
     else if (view.kind === 'workload') targetPath = '/planner/workload';
@@ -113,17 +113,19 @@ export const PlannerViewTabs: React.FC = () => {
 
   return (
     <div style={{ display: 'inline-flex', gap: 6, background: 'var(--bg)', padding: 4, borderRadius: 10, border: '1px solid var(--border)', flexWrap: 'wrap' }}>
-      {renderTab('Tasks', '/planner', (path === '/planner' || path === '/planner/board') && !activeViewId)}
+      {/* Calendar & Dashboard tabs removed on purpose — the app-level Calendar
+          and Dashboard already cover them. The planner is now person-first:
+          My Workspace lands first, team-wide views follow. */}
+      {renderTab('My Workspace', '/planner', path === '/planner')}
+      {renderTab('Tasks', '/planner/tasks', (path === '/planner/tasks' || path === '/planner/board') && !activeViewId)}
       {renderTab('Timeline', '/planner/timeline', path === '/planner/timeline' && !activeViewId)}
       {isStaff && renderTab('Workload', '/planner/workload', path === '/planner/workload' && !activeViewId)}
-      {isStaff && renderTab('Dashboard', '/planner/dashboard', path === '/planner/dashboard' && !activeViewId)}
-      {renderTab('My Work', '/planner/my-work', path === '/planner/my-work')}
 
-      {savedViews.length > 0 && (
+      {savedViews.filter((v) => v.kind !== 'calendar').length > 0 && (
         <div style={{ width: 1, background: 'var(--border)', margin: '4px 2px' }} />
       )}
 
-      {savedViews.map(renderSavedTab)}
+      {savedViews.filter((v) => v.kind !== 'calendar').map(renderSavedTab)}
     </div>
   );
 };

@@ -897,6 +897,54 @@ async function runAutomationActions(
         });
         break;
       }
+      case 'aiSetField': {
+        const apiKey = process.env.ANTHROPIC_API_KEY;
+        const prompt = `You are a helper AI. We have a work item:
+Title: ${item.title}
+Description: ${item.description || ''}
+Fields: ${JSON.stringify(item.fields || {})}
+
+Instruction: ${action.instruction}
+
+Provide ONLY the final raw value to be stored in the field "${action.fieldId}". Do not write any explanation or markdown formatting unless specifically requested.`;
+
+        let aiResponseText = '';
+        if (apiKey && apiKey !== 'your_anthropic_api_key') {
+          try {
+            const response = await fetch('https://api.anthropic.com/v1/messages', {
+              method: 'POST',
+              headers: {
+                'x-api-key': apiKey,
+                'anthropic-version': '2023-06-01',
+                'content-type': 'application/json',
+              },
+              body: JSON.stringify({
+                model: 'claude-3-5-sonnet-20241022',
+                max_tokens: 1024,
+                messages: [{ role: 'user', content: prompt }],
+              }),
+            });
+
+            if (!response.ok) {
+              throw new Error(`Claude API returned status ${response.status}`);
+            }
+
+            const resData = (await response.json()) as any;
+            aiResponseText = resData.content?.[0]?.text || '';
+          } catch (err: any) {
+            // eslint-disable-next-line no-console
+            console.warn('[planner-automations] Claude API failed for aiSetField, using instruction as fallback:', err.message);
+            aiResponseText = `[AI Fallback for ${action.fieldId}]: ${action.instruction.slice(0, 100)}`;
+          }
+        } else {
+          // eslint-disable-next-line no-console
+          console.log('[planner-automations] ANTHROPIC_API_KEY missing, using mock response for aiSetField');
+          aiResponseText = `[Mock AI value for ${action.fieldId}] based on instruction: ${action.instruction}`;
+        }
+
+        patch.fields = { ...((patch.fields as object) ?? item.fields ?? {}), [action.fieldId]: aiResponseText.trim() };
+        break;
+      }
       case 'notify':
         // eslint-disable-next-line no-console
         console.log(`[planner] automation ${auto.id} ${action.type} deferred (outbox stub): item=${item.id}`);
@@ -989,3 +1037,135 @@ export async function executeApprovalDecision(
 
   return outcome;
 }
+
+// ── Time-Based Recurrence Evaluation ─────────────────────────────────────────
+
+export function matchesCron(cronExpr: string, date: Date): boolean {
+  const parts = cronExpr.trim().split(/\s+/);
+  if (parts.length !== 5) return false;
+
+  const min = date.getMinutes();
+  const hour = date.getHours();
+  const dom = date.getDate();
+  const month = date.getMonth() + 1; // 1-12
+  const dow = date.getDay(); // 0-6 (Sun-Sat)
+
+  const matchPart = (part: string, value: number, rangeStart: number, rangeEnd: number): boolean => {
+    if (part === '*') return true;
+    
+    if (part.includes(',')) {
+      return part.split(',').some(p => matchPart(p, value, rangeStart, rangeEnd));
+    }
+
+    if (part.includes('/')) {
+      const [range, stepStr] = part.split('/');
+      const step = parseInt(stepStr, 10);
+      if (isNaN(step)) return false;
+      
+      let start = rangeStart;
+      let end = rangeEnd;
+      if (range !== '*') {
+        if (range.includes('-')) {
+          const [s, e] = range.split('-');
+          start = parseInt(s, 10);
+          end = parseInt(e, 10);
+        } else {
+          start = parseInt(range, 10);
+        }
+      }
+      if (value < start || value > end) return false;
+      return (value - start) % step === 0;
+    }
+
+    if (part.includes('-')) {
+      const [s, e] = part.split('-');
+      const start = parseInt(s, 10);
+      const end = parseInt(e, 10);
+      return value >= start && value <= end;
+    }
+
+    return parseInt(part, 10) === value;
+  };
+
+  return (
+    matchPart(parts[0], min, 0, 59) &&
+    matchPart(parts[1], hour, 0, 23) &&
+    matchPart(parts[2], dom, 1, 31) &&
+    matchPart(parts[3], month, 1, 12) &&
+    matchPart(parts[4], dow, 0, 6)
+  );
+}
+
+interface EvaluateRecurringResult {
+  processed: number;
+  triggered: number;
+  errors: string[];
+}
+
+export async function evaluateRecurringAutomations(nowStr: string): Promise<EvaluateRecurringResult> {
+  const maldivesDate = new Date(new Date(nowStr).toLocaleString('en-US', { timeZone: 'Indian/Maldives' }));
+  const automations = await listAutomations();
+  const activePeriodAutos = automations.filter((a) => a.enabled && a.trigger.type === 'timePeriod');
+
+  let processed = 0;
+  let triggered = 0;
+  const errors: string[] = [];
+
+  const actor: TransitionActor = { uid: 'system:cron', roles: ['admin', 'internal'] };
+
+  for (const auto of activePeriodAutos) {
+    processed++;
+    const trigger = auto.trigger;
+    if (trigger.type !== 'timePeriod') continue;
+
+    const docRef = db.collection('automations').doc(auto.id);
+    const snap = await docRef.get();
+    const data = snap.data();
+    const lastRunAt = data?.lastRunAt as string | undefined;
+
+    let shouldRun = false;
+    if (trigger.intervalDays) {
+      if (!lastRunAt) {
+        shouldRun = true;
+      } else {
+        const elapsed = new Date(nowStr).getTime() - new Date(lastRunAt).getTime();
+        if (elapsed >= trigger.intervalDays * 24 * 60 * 60 * 1000) {
+          shouldRun = true;
+        }
+      }
+    } else if (trigger.cron) {
+      if (matchesCron(trigger.cron, maldivesDate)) {
+        if (!lastRunAt || new Date(nowStr).getTime() - new Date(lastRunAt).getTime() >= 50000) {
+          shouldRun = true;
+        }
+      }
+    }
+
+    if (shouldRun) {
+      try {
+        const result = await createFromTemplate(
+          trigger.templateId,
+          {
+            spaceId: trigger.spaceId,
+            brandIds: trigger.brandIds ?? [],
+          },
+          actor,
+          nowStr,
+          0,
+          `recurring:${auto.id}:${nowStr.slice(0, 16)}`,
+        );
+        if (result.ok) {
+          triggered++;
+          await docRef.set({ lastRunAt: nowStr }, { merge: true });
+        } else {
+          errors.push(`Automation ${auto.id} failed to instantiate template: ${result.message}`);
+        }
+      } catch (err: any) {
+        errors.push(`Automation ${auto.id} failed: ${err.message || err}`);
+      }
+    }
+  }
+
+  return { processed, triggered, errors };
+}
+

@@ -10,7 +10,7 @@
 
 import { Router, Response, NextFunction } from 'express';
 import { requireAuth, requireRole, AuthedRequest } from '../../middleware/auth';
-import { drainOutbox } from '../../lib/planner/data';
+import { drainOutbox, evaluateRecurringAutomations } from '../../lib/planner/data';
 
 const router = Router();
 
@@ -26,6 +26,15 @@ function schedulerOrAdmin(req: AuthedRequest, res: Response, next: NextFunction)
 router.post('/drain-outbox', schedulerOrAdmin, async (_req: AuthedRequest, res: Response, next) => {
   try {
     const result = await drainOutbox(new Date().toISOString(), 50);
+    return res.json({ success: true, ...result });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/evaluate-recurring', schedulerOrAdmin, async (_req: AuthedRequest, res: Response, next) => {
+  try {
+    const result = await evaluateRecurringAutomations(new Date().toISOString());
     return res.json({ success: true, ...result });
   } catch (err) {
     next(err);

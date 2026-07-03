@@ -121,14 +121,7 @@ export async function checkPermission(
 
       // Check task is assigned to Agency or Both
       const isAssigned = resourceData.assignedTo === 'Agency' || resourceData.assignedTo === 'Both' || resourceData.visibility === 'agency' || resourceData.visibility === 'both';
-      if (!isAssigned) return false;
-
-      // RESTRICTED Status transitions: Cannot set to terminal phase
-      if (targetPhase === 'terminal') {
-        return false;
-      }
-
-      return true;
+      return isAssigned;
     }
 
     case 'comment_visibility': {

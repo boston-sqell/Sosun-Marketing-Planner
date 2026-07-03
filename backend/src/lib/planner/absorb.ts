@@ -34,9 +34,6 @@ export interface LegacyStatus {
 
 export const LEGACY_STATUSES: LegacyStatus[] = [
   // not_started
-  { id: 'to-do', name: 'To Do', phase: 'not_started', color: '#6c757d' },
-  { id: 'backlog', name: 'Backlog', phase: 'not_started', color: '#495057' },
-  { id: 'draft', name: 'Draft', phase: 'not_started', color: '#adb5bd' },
   { id: 'idea', name: 'Idea', phase: 'not_started', color: '#6c757d' },
   { id: 'brief-needed', name: 'Brief Needed', phase: 'not_started', color: '#adb5bd' },
   // pending
@@ -62,7 +59,7 @@ export const LEGACY_STATUSES: LegacyStatus[] = [
 
 export const LEGACY_TASK_WORKFLOW_ID = 'wf_task';
 export const DEFAULT_SPACE_ID = 'marketing';
-export const DEFAULT_LEGACY_STATUS = 'To Do';
+export const DEFAULT_LEGACY_STATUS = 'Idea';
 
 export function phaseToCategory(phase: LegacyPhase): StatusCategory {
   switch (phase) {

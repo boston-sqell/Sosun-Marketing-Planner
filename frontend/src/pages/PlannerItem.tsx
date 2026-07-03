@@ -444,7 +444,7 @@ const Row: React.FC<{ label: string; value: string }> = ({ label, value }) => (
 
 const BackLink: React.FC<{ navigate: ReturnType<typeof useNavigate> }> = ({ navigate }) => (
   <button
-    onClick={() => navigate('/planner')}
+    onClick={() => navigate('/planner/tasks')}
     style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6, padding: 0, marginBottom: 16, fontSize: 14 }}
   >
     <ArrowLeft size={16} /> Back to work items

@@ -52,7 +52,6 @@ export const Planner: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   // Expand / collapse states
-  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   const [expandedParents, setExpandedParents] = useState<Record<string, boolean>>({});
 
   // Filter states
@@ -142,30 +141,7 @@ export const Planner: React.FC = () => {
     }
   }, [activeSavedView]);
 
-  // Load group collapse states from localStorage when active workflow changes
-  useEffect(() => {
-    if (activeWfId) {
-      try {
-        const stored = localStorage.getItem(`planner_collapsed_groups_${activeWfId}`);
-        if (stored) {
-          setCollapsedGroups(JSON.parse(stored));
-        } else {
-          setCollapsedGroups({});
-        }
-      } catch {
-        setCollapsedGroups({});
-      }
-    }
-  }, [activeWfId]);
 
-  const toggleGroup = (statusId: string) => {
-    if (!activeWfId) return;
-    setCollapsedGroups(prev => {
-      const next = { ...prev, [statusId]: !prev[statusId] };
-      localStorage.setItem(`planner_collapsed_groups_${activeWfId}`, JSON.stringify(next));
-      return next;
-    });
-  };
 
   const toggleParent = (parentId: string) => {
     setExpandedParents(prev => ({ ...prev, [parentId]: !prev[parentId] }));
@@ -175,8 +151,8 @@ export const Planner: React.FC = () => {
 
   const statusMeta = (item: PlannerWorkItem) => statusIndex.get(item.workflowId)?.get(item.status);
 
-  // Grouping & Filtering logic client-side
-  const { groupedParents, subtasksIndex } = useMemo(() => {
+  // Filtering logic client-side
+  const { flatParents, subtasksIndex } = useMemo(() => {
     const parentChildrenMap = new Map<string, PlannerWorkItem[]>();
     const parentList: PlannerWorkItem[] = [];
 
@@ -205,21 +181,8 @@ export const Planner: React.FC = () => {
       }
     }
 
-    // Group parents by status
-    const groups = new Map<string, PlannerWorkItem[]>();
-    if (activeWf) {
-      for (const s of activeWf.statuses) {
-        groups.set(s.id, []);
-      }
-      for (const it of parentList) {
-        const list = groups.get(it.status) || [];
-        list.push(it);
-        groups.set(it.status, list);
-      }
-    }
-
-    return { groupedParents: groups, subtasksIndex: parentChildrenMap };
-  }, [items, activeWf, activeWfId, filterBrand, filterStatus, filterAssignee, filterLabel]);
+    return { flatParents: parentList, subtasksIndex: parentChildrenMap };
+  }, [items, activeWfId, filterBrand, filterStatus, filterAssignee, filterLabel]);
 
   // Extract unique labels present in items
   const labelOptions = useMemo(() => {
@@ -240,7 +203,7 @@ export const Planner: React.FC = () => {
     setFilterAssignee('');
     setFilterLabel('');
     if (viewId) {
-      navigate('/planner');
+      navigate('/planner/tasks');
     }
   };
 
@@ -259,7 +222,7 @@ export const Planner: React.FC = () => {
         shared,
       });
       await loadViews();
-      navigate(`/planner?viewId=${view.id}`);
+      navigate(`/planner/tasks?viewId=${view.id}`);
     } catch (err) {
       alert('Failed to save view');
     }
@@ -271,7 +234,7 @@ export const Planner: React.FC = () => {
     try {
       await plannerApi.views.delete(viewId);
       await loadViews();
-      navigate('/planner');
+      navigate('/planner/tasks');
     } catch (err) {
       alert('Failed to delete view');
     }
@@ -466,6 +429,37 @@ export const Planner: React.FC = () => {
 
             {renderAssigneeAvatars(item.assigneeUids)}
 
+            <select
+              value=""
+              onClick={(e) => e.stopPropagation()}
+              onChange={async (e) => {
+                const list = e.target.value as 'todo' | 'backlog' | 'draft';
+                if (!list) return;
+                try {
+                  await plannerApi.todos.create(item.title, item.dueDate || null, list, item.id);
+                  alert(`Task added to your workspace as ${list === 'todo' ? 'To Do' : list === 'backlog' ? 'Backlog' : 'Draft'}!`);
+                } catch (err) {
+                  alert('Failed to add task to workspace');
+                }
+              }}
+              style={{
+                padding: '4px 8px',
+                borderRadius: 6,
+                border: '1px solid var(--border)',
+                background: 'var(--bg)',
+                color: 'var(--text-muted)',
+                fontSize: 11,
+                fontWeight: 700,
+                cursor: 'pointer',
+                outline: 'none',
+              }}
+            >
+              <option value="">+ Workspace</option>
+              <option value="todo">As To Do</option>
+              <option value="backlog">As Backlog</option>
+              <option value="draft">As Draft</option>
+            </select>
+
             <StatusBadge status={item.status} meta={statusMeta(item)} />
           </div>
         </div>
@@ -485,7 +479,7 @@ export const Planner: React.FC = () => {
           {/* Layout Toggle */}
           <div style={{ display: 'flex', background: 'var(--bg)', padding: 4, borderRadius: 8, border: '1px solid var(--border)' }}>
             <button
-               onClick={() => navigate('/planner')}
+               onClick={() => navigate('/planner/tasks')}
                style={{ background: 'var(--card)', color: 'var(--text)', border: 'none', padding: '4px 12px', borderRadius: 6, cursor: 'pointer', fontWeight: 600, boxShadow: 'var(--shadow-sm)', fontSize: 13 }}>
                List
             </button>
@@ -552,83 +546,14 @@ export const Planner: React.FC = () => {
           No workflow configured. Run the planner seed script.
         </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {activeWf.statuses.map((status) => {
-            const statusParents = groupedParents.get(status.id) || [];
-            const isCollapsed = !!collapsedGroups[status.id];
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {flatParents.map(parent => renderRow(parent))}
 
-            let totalCountInStatus = statusParents.length;
-            for (const parent of statusParents) {
-              const children = subtasksIndex.get(parent.id) || [];
-              totalCountInStatus += children.length;
-            }
-
-            return (
-              <div
-                key={status.id}
-                style={{
-                  background: 'var(--bg)',
-                  border: '1px solid var(--border)',
-                  borderRadius: 12,
-                  padding: 12,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 8,
-                }}
-              >
-                {/* Status Group Header */}
-                <div
-                  onClick={() => toggleGroup(status.id)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    cursor: 'pointer',
-                    userSelect: 'none',
-                    padding: '4px 8px',
-                  }}
-                >
-                  <span style={{ color: 'var(--text-muted)' }}>
-                    {isCollapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
-                  </span>
-
-                  <span style={{ width: 10, height: 10, borderRadius: 999, background: status.color, display: 'inline-block' }} />
-                  <span style={{ fontWeight: 800, fontSize: 14, color: 'var(--text)' }}>
-                    {status.name}
-                  </span>
-                  <span
-                    style={{
-                      background: 'var(--card)',
-                      border: '1px solid var(--border)',
-                      padding: '1px 6px',
-                      borderRadius: 6,
-                      fontSize: 12,
-                      fontWeight: 700,
-                      color: 'var(--text-muted)',
-                      marginLeft: 4,
-                    }}
-                  >
-                    {totalCountInStatus}
-                  </span>
-                </div>
-
-                {/* Status Group Rows */}
-                {!isCollapsed && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
-                    {statusParents.map(parent => renderRow(parent))}
-
-                    {statusParents.length === 0 && (
-                      <div style={{ padding: '12px 16px', fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic', border: '1px dashed var(--border)', borderRadius: 8, textAlign: 'center' }}>
-                        No items in this status.
-                      </div>
-                    )}
-
-
-                  </div>
-                )}
-              </div>
-            );
-          })}
+          {flatParents.length === 0 && (
+            <div className="section-card" style={{ padding: '24px 16px', fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic', textAlign: 'center' }}>
+              No work items match the filters.
+            </div>
+          )}
         </div>
       )}
     </div>
