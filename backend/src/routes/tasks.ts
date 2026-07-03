@@ -6,8 +6,33 @@ import { db } from '../services/firestore';
 import { sendPushToRoles } from '../services/pushService';
 import { checkPermission, isProjectMember } from '../middleware/rbac';
 import { firestore } from 'firebase-admin';
+import { upgradeLegacyTaskPatch } from '../lib/planner/absorb';
 
 const router = Router();
+
+export function syncLegacyMirrorFields(
+  patch: Record<string, any>,
+  nameToUid: Map<string, string>
+): Record<string, any> {
+  const sync: Record<string, any> = {};
+
+  if (patch.brand !== undefined) {
+    sync.brandIds = patch.brand ? [patch.brand] : [];
+  }
+
+  if (patch.assignedTo !== undefined) {
+    const assigneeUid = nameToUid.get(String(patch.assignedTo ?? '').toLowerCase().trim());
+    sync.assigneeUids = assigneeUid ? [assigneeUid] : [];
+  }
+
+  if (patch.dueDate !== undefined) {
+    sync.dueDate = patch.dueDate;
+  } else if (patch.draftDueDate !== undefined || patch.scheduledDate !== undefined) {
+    sync.dueDate = patch.draftDueDate || patch.scheduledDate || null;
+  }
+
+  return sync;
+}
 
 // Cloud Scheduler auth helper
 function schedulerOrAdmin(req: AuthedRequest, res: Response, next: NextFunction) {
@@ -52,7 +77,7 @@ router.get('/check-deadlines', schedulerOrAdmin, async (req, res, next) => {
         const payload = {
           title: urgency,
           body: `${task.title} is due ${isToday ? 'today' : 'tomorrow'} (${dueDate}).`,
-          url: '/tasks',
+          url: '/planner/tasks',
           tag: `deadline-${doc.id}`,
         };
 
@@ -266,7 +291,27 @@ router.post('/', validate(CreateTaskSchema), async (req: AuthedRequest, res: Res
       }
     }
 
-    const docRef = await db.collection('tasks').add(newTask);
+    // Resolve nameToUid map for assigneeUid mapping
+    const nameToUid = new Map<string, string>();
+    const usersSnap = await db.collection('users').get();
+    for (const doc of usersSnap.docs) {
+      const d = doc.data();
+      for (const key of [d.displayName, d.name, d.username]) {
+        if (typeof key === 'string' && key.trim()) {
+          nameToUid.set(key.toLowerCase().trim(), doc.id);
+        }
+      }
+    }
+
+    // Call upgradeLegacyTaskPatch
+    const nowStr = new Date().toISOString();
+    const patch = upgradeLegacyTaskPatch(newTask, nowStr, nameToUid) || {};
+    const taskWithWorkItemFields = {
+      ...newTask,
+      ...patch,
+    };
+
+    const docRef = await db.collection('tasks').add(taskWithWorkItemFields);
     return res.json({ success: true, id: docRef.id });
   } catch (err: any) {
     next(err);
@@ -281,6 +326,10 @@ router.put('/:id', validate(UpdateTaskSchema), async (req: AuthedRequest, res: R
     const { id } = req.params;
     const role = req.role || 'agency';
     const userUid = req.uid!;
+
+    // Defensively strip workflowId and typeId to prevent tampering
+    delete req.body.workflowId;
+    delete req.body.typeId;
 
     const taskDoc = await db.collection('tasks').doc(id).get();
     if (!taskDoc.exists) {
@@ -362,7 +411,25 @@ router.put('/:id', validate(UpdateTaskSchema), async (req: AuthedRequest, res: R
       return res.status(403).json({ success: false, error: 'Forbidden: cannot edit this task' });
     }
 
-    await db.collection('tasks').doc(id).update(writePatch);
+    // Resolve nameToUid map for assigneeUid mapping
+    const nameToUid = new Map<string, string>();
+    const usersSnap = await db.collection('users').get();
+    for (const doc of usersSnap.docs) {
+      const d = doc.data();
+      for (const key of [d.displayName, d.name, d.username]) {
+        if (typeof key === 'string' && key.trim()) {
+          nameToUid.set(key.toLowerCase().trim(), doc.id);
+        }
+      }
+    }
+
+    const legacyMirror = syncLegacyMirrorFields(writePatch, nameToUid);
+    const finalPatch = {
+      ...writePatch,
+      ...legacyMirror,
+    };
+
+    await db.collection('tasks').doc(id).update(finalPatch);
     return res.json({ success: true });
   } catch (err: any) {
     next(err);

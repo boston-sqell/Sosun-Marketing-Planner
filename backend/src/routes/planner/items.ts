@@ -69,6 +69,15 @@ function agencyCanAccess(item: { typeId?: string; fields?: Record<string, unknow
   return (item.assigneeUids ?? []).includes(uid);
 }
 
+function stripInternalComments(item: any, role: AppRole) {
+  if (role === 'agency' || role === 'external_agency') {
+    if (item.comments && Array.isArray(item.comments)) {
+      item.comments = item.comments.filter((c: any) => c.internalOnly !== true && c.internal_only !== true);
+    }
+  }
+  return item;
+}
+
 /**
  * Build the engine actor from the request. Workflow `role` conditions match
  * against BOTH the identity claim (admin/internal/agency…) and the resolved
