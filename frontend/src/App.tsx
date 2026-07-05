@@ -1,7 +1,5 @@
-import React, { lazy, Suspense, useState, useEffect } from 'react';
+import React, { lazy, Suspense, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from './firebase/config';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { BrandScopeProvider } from './context/BrandScopeContext';
 import { PushNotificationProvider } from './context/PushNotificationContext';
@@ -43,32 +41,8 @@ const AppContent: React.FC = () => {
   // Agency partners must never reach financial views (rules also deny the data server-side)
   const isAgency = profile?.role === 'agency';
 
-  // Whether the legacy Tasks & Queue page has been absorbed into the planner
-  // Tasks tab. Driven by the presence of the wf_task workflow doc (created by
-  // the absorb migration). Cached in sessionStorage so subsequent loads are
-  // instant and flicker-free; `null` means "not yet resolved" → show a spinner.
-  const [tasksAbsorbed, setTasksAbsorbed] = useState<boolean | null>(
-    sessionStorage.getItem('tasksAbsorbed') === 'true' ? true : null
-  );
-
-  useEffect(() => {
-    if (!user) return; // only probe once authenticated (rules require auth)
-    if (tasksAbsorbed === true) return; // already resolved from cache
-    let cancelled = false;
-    (async () => {
-      try {
-        const snap = await getDoc(doc(db, 'workflows', 'wf_task'));
-        if (cancelled) return;
-        const absorbed = snap.exists();
-        setTasksAbsorbed(absorbed);
-        if (absorbed) sessionStorage.setItem('tasksAbsorbed', 'true');
-      } catch {
-        // On a probe failure fall back to the legacy layout rather than blocking.
-        if (!cancelled) setTasksAbsorbed(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [user, tasksAbsorbed]);
+  // The absorption migration is complete. Default to true to prevent blocking rendering.
+  const [tasksAbsorbed] = useState<boolean>(true);
 
   if (loading) {
     return <LoadingSpinner message="Verifying credentials..." fullPage />;
@@ -105,12 +79,6 @@ const AppContent: React.FC = () => {
         </div>
       </div>
     );
-  }
-
-  // Hold rendering until the absorption state resolves, so the sidebar/route
-  // don't flicker between the legacy and merged layouts on first paint.
-  if (tasksAbsorbed === null) {
-    return <LoadingSpinner message="Initializing workspace..." fullPage />;
   }
 
   const getPageInfo = () => {

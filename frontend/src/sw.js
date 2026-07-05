@@ -73,7 +73,7 @@ self.addEventListener('pushsubscriptionchange', (event) => {
   event.waitUntil(
     self.registration.pushManager.subscribe(event.oldSubscription?.options || { userVisibleOnly: true })
       .then((newSub) =>
-        fetch('/api/push/subscribe', {
+        fetch(import.meta.env.VITE_BACKEND_URL + '/api/push/subscribe', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

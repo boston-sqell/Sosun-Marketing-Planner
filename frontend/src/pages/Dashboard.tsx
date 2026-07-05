@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { db } from '../firebase/config';
-import { collection, query, limit, orderBy, onSnapshot } from 'firebase/firestore';
+import { collection, query, limit, orderBy, onSnapshot, where } from 'firebase/firestore';
 import {
   Megaphone,
   CheckSquare,
@@ -102,16 +102,17 @@ export const Dashboard: React.FC = () => {
       setActivities(snap.docs.map(doc => ({ ...doc.data(), id: doc.id }) as ActivityRow));
     }, err => console.error('Error listening to activities:', err)));
 
-    unsubs.push(onSnapshot(collection(db, 'events'), snap => {
+    unsubs.push(onSnapshot(query(collection(db, 'events'), where('status', '!=', 'Reported')), snap => {
       setEvents(snap.docs.map(doc => ({ ...doc.data(), id: doc.id } as EventData)));
     }, err => console.warn('events listener:', (err as Error).message)));
 
-    unsubs.push(onSnapshot(collection(db, 'distributions'), snap => {
+    unsubs.push(onSnapshot(query(collection(db, 'distributions'), where('status', 'in', ['installed', 'verified'])), snap => {
       setDists(snap.docs.map(doc => ({ ...doc.data(), id: doc.id } as Distribution)));
     }, err => console.warn('distributions listener:', (err as Error).message)));
 
     if (canSeeBudget) {
-      unsubs.push(onSnapshot(collection(db, 'budgetEntries'), snap => {
+      const monthStart = isoToday().slice(0, 7) + '-01';
+      unsubs.push(onSnapshot(query(collection(db, 'budgetEntries'), where('spentAt', '>=', monthStart)), snap => {
         setLedger(snap.docs.map(doc => ({ ...doc.data(), id: doc.id } as BudgetEntry)));
       }, err => console.warn('ledger listener:', (err as Error).message)));
     }

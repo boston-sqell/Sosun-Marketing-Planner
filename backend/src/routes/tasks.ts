@@ -158,17 +158,11 @@ router.get('/', async (req: AuthedRequest, res: Response, next) => {
     let tasksList: any[] = [];
     let nextCursor: string | null = null;
 
-    // Filter permitted tasks in memory to apply condition-aware RBAC
-    for (const doc of tasksSnap.docs) {
-      nextCursor = doc.id;
+    const permPromises = tasksSnap.docs.map(async (doc) => {
       const task = { ...doc.data(), id: doc.id } as any;
 
-      // Post-absorption the `tasks` collection is also the planner work-item
-      // store (docs/planner/spec-revisions.md §1). The legacy Tasks surface
-      // only understands task/meeting shapes; planner-native items (campaign,
-      // event, creative_task, …) are served by /api/planner/items.
       if (task.typeId && task.typeId !== 'task' && task.typeId !== 'meeting') {
-        continue;
+        return null;
       }
 
       const hasPerm = await checkPermission(role, 'task', 'view', {
@@ -177,14 +171,23 @@ router.get('/', async (req: AuthedRequest, res: Response, next) => {
       });
 
       if (hasPerm) {
-        // Feature 2 Filter: filter by statusPhase if specified
         if (filterPhaseParam && task.statusPhase !== filterPhaseParam) {
-          continue;
+          return null;
         }
 
         stripInternalComments(task, role);
-        tasksList.push(task);
+        return task;
       }
+      return null;
+    });
+
+    const results = await Promise.all(permPromises);
+    for (const task of results) {
+      if (task) tasksList.push(task);
+    }
+
+    if (tasksSnap.docs.length > 0) {
+      nextCursor = tasksSnap.docs[tasksSnap.docs.length - 1].id;
     }
 
     if (tasksSnap.docs.length < limitAmount) {

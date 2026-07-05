@@ -164,10 +164,24 @@ export const Tasks: React.FC = () => {
   const hasMoreToShow   = displayCount < filteredTasks.length;
 
   // Stats
-  const totalTasks     = baseList.length;
-  const publishedCount = baseList.filter(t => t.status === 'Published' || t.status === 'Completed').length;
-  const inReviewCount  = baseList.filter(t => ['In Review', 'Draft Ready', 'Revision Needed'].includes(t.status)).length;
-  const overdueCount   = baseList.filter(t => t.overdue === true).length;
+  const stats = useMemo(() => {
+    let publishedCount = 0;
+    let inReviewCount = 0;
+    let overdueCount = 0;
+    for (const t of baseList) {
+      if (t.status === 'Published' || t.status === 'Completed') publishedCount++;
+      else if (t.status === 'In Review' || t.status === 'Draft Ready' || t.status === 'Revision Needed') inReviewCount++;
+      if (t.overdue) overdueCount++;
+    }
+    return {
+      totalTasks: baseList.length,
+      publishedCount,
+      inReviewCount,
+      overdueCount,
+    };
+  }, [baseList]);
+
+  const { totalTasks, publishedCount, inReviewCount, overdueCount } = stats;
 
   // ── Form helpers ──────────────────────────────────────────────────────────
   
