@@ -36,7 +36,7 @@ router.get('/', async (req: AuthedRequest, res: Response, next) => {
     const campaignsList: any[] = [];
     let nextCursor: string | null = null;
 
-    const permPromises = campaignsSnap.docs.map(async (doc) => {
+    const permPromises = campaignsSnap.docs.map(async (doc: any) => {
       const data = doc.data();
       const campaign: any = { ...data, id: doc.id };
 

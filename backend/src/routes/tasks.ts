@@ -158,7 +158,7 @@ router.get('/', async (req: AuthedRequest, res: Response, next) => {
     let tasksList: any[] = [];
     let nextCursor: string | null = null;
 
-    const permPromises = tasksSnap.docs.map(async (doc) => {
+    const permPromises = tasksSnap.docs.map(async (doc: any) => {
       const task = { ...doc.data(), id: doc.id } as any;
 
       if (task.typeId && task.typeId !== 'task' && task.typeId !== 'meeting') {
