@@ -83,6 +83,10 @@ router.post('/push', requireAuth, requireRole('admin', 'internal'), async (req, 
     const postsData: any[] = [];
     postsSnapshot.forEach(doc => {
       const data = doc.data();
+      // Post-absorption, `tasks` also holds planner-native items (campaign,
+      // event, creative_task, …); only legacy task/meeting shapes belong in
+      // the POSTS sheet.
+      if (data.typeId && data.typeId !== 'task' && data.typeId !== 'meeting') return;
       postsData.push({
         id: doc.id,
         title: data.title || '',

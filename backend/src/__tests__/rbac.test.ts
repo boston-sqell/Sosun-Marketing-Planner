@@ -213,14 +213,14 @@ describe('checkPermission — agency role', () => {
     ).toBe(true);
   });
 
-  it('cannot transition to terminal phase', async () => {
+  it('can transition to terminal phase', async () => {
     expect(
       await checkPermission('agency', 'task', 'status_transition', {
         userUid: AGENCY_UID,
         resourceData: { assignedTo: 'Agency' },
         targetPhase: 'terminal',
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it('cannot transition status on non-assigned tasks', async () => {

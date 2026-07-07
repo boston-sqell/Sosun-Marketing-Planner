@@ -7,6 +7,7 @@ import {
   Calendar,
   Megaphone,
   CheckSquare,
+  KanbanSquare,
   Images,
   Settings,
   LogOut,
@@ -20,13 +21,22 @@ import {
   X,
 } from 'lucide-react';
 
-const PRIMARY_PATHS = ['/', '/campaigns', '/tasks', '/calendar'];
 const MQ = '(max-width: 768px)';
 
-export const Sidebar: React.FC = () => {
+interface SidebarProps {
+  /** When the legacy Tasks & Queue page has been absorbed into /planner/tasks,
+   *  drop the standalone Tasks entry and promote Planner into the primary nav. */
+  tasksAbsorbed?: boolean;
+}
+
+export const Sidebar: React.FC<SidebarProps> = ({ tasksAbsorbed }) => {
   const { profile, logout } = useAuth();
   const role = profile?.role || 'internal';
   const [moreOpen, setMoreOpen] = useState(false);
+
+  const PRIMARY_PATHS = tasksAbsorbed
+    ? ['/', '/campaigns', '/planner', '/calendar']
+    : ['/', '/campaigns', '/tasks', '/calendar'];
 
   // Only render mobile nav when viewport is actually mobile — no CSS dependency
   const isMobile = useMediaQuery(MQ);
@@ -38,6 +48,7 @@ export const Sidebar: React.FC = () => {
     { path: '/', label: 'Dashboard', icon: LayoutDashboard, roles: ['admin', 'internal', 'agency'] },
     { path: '/campaigns', label: 'Campaigns', icon: Megaphone, roles: ['admin', 'internal', 'agency'] },
     { path: '/tasks', label: 'Tasks & Queue', icon: CheckSquare, roles: ['admin', 'internal', 'agency'] },
+    { path: '/planner', label: 'Planner', icon: KanbanSquare, roles: ['admin', 'internal', 'agency'] },
     { path: '/calendar', label: 'Calendar', icon: Calendar, roles: ['admin', 'internal', 'agency'] },
     { path: '/events', label: 'Events', icon: Tent, roles: ['admin', 'internal', 'agency'] },
     { path: '/retail', label: 'Merchandising', icon: Store, roles: ['admin', 'internal', 'agency'] },
@@ -49,7 +60,11 @@ export const Sidebar: React.FC = () => {
     { path: '/config', label: 'Configuration', icon: Settings, roles: ['admin'] },
   ];
 
-  const filteredItems  = menuItems.filter(item => item.roles.includes(role));
+  const filteredItems  = menuItems
+    .filter(item => item.roles.includes(role))
+    // Once absorbed, the standalone Tasks & Queue link is replaced by the
+    // planner Tasks tab (reached via Planner → Tasks).
+    .filter(item => !(tasksAbsorbed && item.path === '/tasks'));
   const primaryItems   = filteredItems.filter(item => PRIMARY_PATHS.includes(item.path));
   const secondaryItems = filteredItems.filter(item => !PRIMARY_PATHS.includes(item.path));
 

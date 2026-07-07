@@ -169,7 +169,7 @@ router.post('/notify-task', requireRole('admin', 'internal'), async (req: Authed
       await sendPushToRoles(rolesToNotify, {
         title: `Task ${action}: ${title}`,
         body: `A task has been ${action.toLowerCase()} to ${assignedTo}. Tap to view Tasks & Queue.`,
-        url: '/tasks',
+        url: '/planner/tasks',
         tag: `task-${taskId}`,
       });
     }
@@ -255,7 +255,7 @@ router.post('/notify-meeting', requireRole('admin', 'internal'), async (req: Aut
     const payload = {
       title: `Meeting ${action}: ${title}`,
       body: `A meeting has been scheduled: ${meeting?.agenda || 'No agenda'}. Location: ${meeting?.location || 'N/A'}.`,
-      url: '/tasks',
+      url: '/planner/tasks',
       tag: `meeting-${meetingId}`,
     };
 

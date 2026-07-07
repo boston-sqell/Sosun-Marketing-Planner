@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git checkout *)",
+      "Bash(node -e \"JSON.parse\\(require\\('fs'\\).readFileSync\\('firestore.indexes.json','utf8'\\)\\); console.log\\('indexes JSON valid, index count:', JSON.parse\\(require\\('fs'\\).readFileSync\\('firestore.indexes.json','utf8'\\)\\).indexes.length\\)\")",
+      "Bash(node -e \"const j=JSON.parse\\(require\\('fs'\\).readFileSync\\('firestore.indexes.json','utf8'\\)\\); console.log\\('indexes valid, count:', j.indexes.length\\)\")",
+      "Bash(git push *)",
+      "Bash(gh pr *)"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\User\\.claude\\projects\\c--Users-User--gemini-antigravity-ide-scratch-sosun-marketing-planner\\memory"
+    ]
+  }
+}

@@ -2,7 +2,14 @@ import React, { useState } from 'react';
 import { X, Edit, Trash2, Video } from 'lucide-react';
 import { tasksApi } from '../../services/tasksApi';
 import { toDisplayDate } from '../../utils/dateUtils';
-import type { TaskData, UserItem, ChecklistItem, CommentItem } from '../../types';
+import type { TaskData, UserItem, ChecklistItem } from '../../types';
+import { logActivity } from '../../utils/activityLogger';
+
+const STATUS_OPTIONS = [
+  'Requested', 'Idea', 'Brief Needed', 'Brief Sent',
+  'Draft Ready', 'In Review', 'Revision Needed',
+  'Approved', 'Scheduled', 'Published', 'Completed',
+];
 
 interface TaskDetailModalProps {
   isOpen: boolean;
@@ -21,6 +28,40 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
 }) => {
   const [newCheckItem, setNewCheckItem] = useState('');
   const [newComment, setNewComment] = useState('');
+  const [updatingStatus, setUpdatingStatus] = useState(false);
+
+  const isAgency = role === 'agency' || role === 'external_agency';
+  const isAssignedToAgency = task && (task.assignedTo === 'Agency' || task.assignedTo === 'Both' || task.visibility === 'agency' || (task.visibility as string) === 'both');
+  const canChangeStatus = role === 'admin' || role === 'internal' || (isAgency && isAssignedToAgency);
+
+  const handleStatusChange = async (newStatus: string) => {
+    if (!task) return;
+    setUpdatingStatus(true);
+    const newStatusId = newStatus.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const prevTask = { ...task };
+    
+    // Optimistic Update
+    const updated = { ...task, status: newStatus, statusId: newStatusId };
+    onTaskUpdated(updated);
+    
+    try {
+      await tasksApi.update(task.id, { status: newStatus, statusId: newStatusId });
+      await logActivity(
+        profileName,
+        role,
+        newStatus === 'Approved' ? 'approval' : 'task',
+        `updated status to "${newStatus}" for`,
+        task.title,
+        task.id
+      ).catch(err => console.error(err));
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error ? err.message : 'Failed to update status');
+      onTaskUpdated(prevTask); // revert
+    } finally {
+      setUpdatingStatus(false);
+    }
+  };
 
   if (!isOpen || !task) return null;
 
@@ -63,24 +104,19 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
 
   const handleAddComment = async () => {
     if (!newComment.trim()) return;
-    const comment: CommentItem = {
-      id: Date.now().toString(),
-      user: profileName,
-      role,
-      text: newComment.trim(),
-      time: new Date().toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })
-    };
-    const list = task.comments || [];
-    const newList = [...list, comment];
-    
+    const text = newComment.trim();
     setNewComment('');
-    const updated = { ...task, comments: newList };
-    onTaskUpdated(updated);
     try {
-      await tasksApi.update(task.id, { comments: newList });
+      // Route through the dedicated endpoint, which performs a Firestore
+      // arrayUnion server-side. A full-array PUT would clobber internal-only
+      // comments (which are stripped from agency reads) — permanently deleting
+      // them the moment an agency user posts a reply.
+      const saved = await tasksApi.addComment(task.id, text);
+      onTaskUpdated({ ...task, comments: [...(task.comments || []), saved] });
     } catch (err) {
       console.error(err);
-      onTaskUpdated(task); // revert
+      alert(err instanceof Error ? err.message : 'Failed to add comment');
+      setNewComment(text); // restore the draft so the user doesn't lose it
     }
   };
 
@@ -107,9 +143,33 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                 <span className="badge urgent" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
                   <Video size={13} /> Meeting
                 </span>
-                <span className={`badge ${(task.status || 'Scheduled').toLowerCase().replace(/ /g, '-')}`}>
-                  {task.status || 'Scheduled'}
-                </span>
+                {canChangeStatus ? (
+                  <select
+                    value={task.status || 'Scheduled'}
+                    disabled={updatingStatus}
+                    onChange={(e) => handleStatusChange(e.target.value)}
+                    style={{
+                      padding: '3px 8px',
+                      borderRadius: '4px',
+                      fontSize: '12px',
+                      fontWeight: 700,
+                      border: '1px solid var(--border)',
+                      background: 'var(--card)',
+                      color: 'var(--text)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {STATUS_OPTIONS.map((opt) => (
+                      <option key={opt} value={opt}>
+                        {opt}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <span className={`badge ${(task.status || 'Scheduled').toLowerCase().replace(/ /g, '-')}`}>
+                    {task.status || 'Scheduled'}
+                  </span>
+                )}
                 <span className="badge low">
                   {task.visibility === 'internal' ? 'Internal' : task.visibility === 'agency' ? 'Marketing Agency' : 'External'}
                 </span>
@@ -204,7 +264,31 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
               {/* Task Meta */}
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '16px' }}>
                 <span className={`badge ${task.priority?.toLowerCase()}`}>{task.priority}</span>
-                <span className={`badge ${task.status?.toLowerCase().replace(/ /g,'-')}`}>{task.status}</span>
+                {canChangeStatus ? (
+                  <select
+                    value={task.status || 'Idea'}
+                    disabled={updatingStatus}
+                    onChange={(e) => handleStatusChange(e.target.value)}
+                    style={{
+                      padding: '3px 8px',
+                      borderRadius: '4px',
+                      fontSize: '12px',
+                      fontWeight: 700,
+                      border: '1px solid var(--border)',
+                      background: 'var(--card)',
+                      color: 'var(--text)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {STATUS_OPTIONS.map((opt) => (
+                      <option key={opt} value={opt}>
+                        {opt}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <span className={`badge ${task.status?.toLowerCase().replace(/ /g,'-')}`}>{task.status}</span>
+                )}
                 <span className="badge low">{task.brand}</span>
                 <span className="badge low">{task.contentType}</span>
                 {task.campaignId && <span className="badge low" style={{ fontFamily: 'monospace' }}>{task.campaignId}</span>}

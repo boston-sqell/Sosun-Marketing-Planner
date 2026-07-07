@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { db } from '../firebase/config';
-import { collection, query, limit, orderBy, onSnapshot } from 'firebase/firestore';
+import { collection, query, limit, orderBy, onSnapshot, where } from 'firebase/firestore';
 import {
   Megaphone,
   CheckSquare,
@@ -102,16 +102,17 @@ export const Dashboard: React.FC = () => {
       setActivities(snap.docs.map(doc => ({ ...doc.data(), id: doc.id }) as ActivityRow));
     }, err => console.error('Error listening to activities:', err)));
 
-    unsubs.push(onSnapshot(collection(db, 'events'), snap => {
+    unsubs.push(onSnapshot(query(collection(db, 'events'), where('status', '!=', 'Reported')), snap => {
       setEvents(snap.docs.map(doc => ({ ...doc.data(), id: doc.id } as EventData)));
     }, err => console.warn('events listener:', (err as Error).message)));
 
-    unsubs.push(onSnapshot(collection(db, 'distributions'), snap => {
+    unsubs.push(onSnapshot(query(collection(db, 'distributions'), where('status', 'in', ['installed', 'verified'])), snap => {
       setDists(snap.docs.map(doc => ({ ...doc.data(), id: doc.id } as Distribution)));
     }, err => console.warn('distributions listener:', (err as Error).message)));
 
     if (canSeeBudget) {
-      unsubs.push(onSnapshot(collection(db, 'budgetEntries'), snap => {
+      const monthStart = isoToday().slice(0, 7) + '-01';
+      unsubs.push(onSnapshot(query(collection(db, 'budgetEntries'), where('spentAt', '>=', monthStart)), snap => {
         setLedger(snap.docs.map(doc => ({ ...doc.data(), id: doc.id } as BudgetEntry)));
       }, err => console.warn('ledger listener:', (err as Error).message)));
     }
@@ -229,10 +230,16 @@ export const Dashboard: React.FC = () => {
   };
 
   const todaysTasks = useMemo(() => {
-    const sorted = [...scopedTasks].sort((a, b) => {
-      const termA = (a.isTerminal || a.statusPhase === 'terminal') ? 1 : 0;
-      const termB = (b.isTerminal || b.statusPhase === 'terminal') ? 1 : 0;
-      if (termA !== termB) return termA - termB;
+    // Only show active tasks in the queue (exclude terminal, completed, and meetings)
+    const activeTasks = scopedTasks.filter(t => {
+      if (t.isTerminal || t.statusPhase === 'terminal') return false;
+      const s = (t.status || '').toLowerCase();
+      if (s === 'completed' || s === 'published' || s === 'cancelled') return false;
+      if (t.type === 'meeting') return false;
+      return true;
+    });
+
+    const sorted = [...activeTasks].sort((a, b) => {
       const dateA = a.createdAt || '';
       const dateB = b.createdAt || '';
       return dateB.localeCompare(dateA);

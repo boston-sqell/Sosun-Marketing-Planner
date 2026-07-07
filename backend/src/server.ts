@@ -14,6 +14,13 @@ import tasksRouter from './routes/tasks';
 import campaignsRouter from './routes/campaigns';
 import budgetRouter from './routes/budget';
 import eventsRouter from './routes/events';
+import plannerItemsRouter from './routes/planner/items';
+import plannerConfigRouter from './routes/planner/config';
+import plannerCronRouter from './routes/planner/cron';
+import plannerViewsRouter from './routes/planner/views';
+import plannerAgentRouter from './routes/planner/agent';
+import plannerTodosRouter from './routes/planner/todos';
+import activitiesRouter from './routes/activities';
 
 dotenv.config();
 
@@ -102,7 +109,7 @@ app.use(express.json());
 const MEDIA_STREAM_PATH = /^\/api\/drive\/files\/[^/]+\/(content|thumbnail)(\/|$)|^\/api\/drive\/files\/[^/]+\/revisions\/[^/]+\/content$/;
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: 1000,
   standardHeaders: true,
   legacyHeaders: false,
   // Media streaming (range requests, thumbnails) can issue many GETs for a single
@@ -134,6 +141,13 @@ app.use('/api/tasks', tasksRouter);
 app.use('/api/campaigns', campaignsRouter);
 app.use('/api/budget', budgetRouter);
 app.use('/api/events', eventsRouter);
+app.use('/api/planner/items', plannerItemsRouter);
+app.use('/api/planner/config', plannerConfigRouter);
+app.use('/api/planner/cron', plannerCronRouter);
+app.use('/api/planner/views', plannerViewsRouter);
+app.use('/api/planner/agent', plannerAgentRouter);
+app.use('/api/planner/todos', plannerTodosRouter);
+app.use('/api/activities', activitiesRouter);
 
 // Basic health check route
 app.get('/health', (req, res) => {

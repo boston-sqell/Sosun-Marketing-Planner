@@ -36,8 +36,7 @@ router.get('/', async (req: AuthedRequest, res: Response, next) => {
     const campaignsList: any[] = [];
     let nextCursor: string | null = null;
 
-    for (const doc of campaignsSnap.docs) {
-      nextCursor = doc.id; // The last evaluated doc ID becomes the next cursor
+    const permPromises = campaignsSnap.docs.map(async (doc: any) => {
       const data = doc.data();
       const campaign: any = { ...data, id: doc.id };
 
@@ -56,8 +55,18 @@ router.get('/', async (req: AuthedRequest, res: Response, next) => {
           delete campaign.financial_summary;
           delete campaign.performance_metrics;
         }
-        campaignsList.push(campaign);
+        return campaign;
       }
+      return null;
+    });
+
+    const results = await Promise.all(permPromises);
+    for (const campaign of results) {
+      if (campaign) campaignsList.push(campaign);
+    }
+    
+    if (campaignsSnap.docs.length > 0) {
+      nextCursor = campaignsSnap.docs[campaignsSnap.docs.length - 1].id;
     }
 
     // If we fetched fewer docs than the limit, we've hit the end of the collection

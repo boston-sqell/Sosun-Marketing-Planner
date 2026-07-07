@@ -1,0 +1,102 @@
+/**
+ * Marketing Planner — request schemas (Zod).
+ *
+ * Same pattern as schemas/index.ts: validate() replaces req.body with the
+ * parsed, whitelisted output. Update schemas are .strict() so unknown keys are
+ * rejected (prevents mass-assignment, e.g. smuggling `status`/`workflowId`).
+ */
+
+import { z } from 'zod';
+
+const priority = z.enum(['low', 'normal', 'high', 'urgent']);
+
+export const CreatePlannerItemSchema = z.object({
+  typeId: z.string().min(1, 'typeId is required').trim(),
+  title: z.string().min(1, 'title is required').trim(),
+  description: z.string().trim().optional().default(''),
+  spaceId: z.string().min(1, 'spaceId is required').trim(),
+  brandIds: z.array(z.string()).default([]),
+  assigneeUids: z.array(z.string()).default([]),
+  priority: priority.default('normal'),
+  labels: z.array(z.string()).default([]),
+  fields: z.record(z.string(), z.unknown()).default({}),
+  parentId: z.string().nullable().default(null),
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD').nullable().default(null),
+  dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD').nullable().default(null),
+});
+
+/**
+ * Editable, non-status fields only. `status`/`workflowId`/`typeId` are absent by
+ * design — status changes go exclusively through the transition endpoint (§4),
+ * and .strict() rejects any attempt to include them.
+ */
+export const UpdatePlannerItemSchema = z
+  .object({
+    title: z.string().trim().min(1).optional(),
+    description: z.string().trim().optional(),
+    brandIds: z.array(z.string()).optional(),
+    assigneeUids: z.array(z.string()).optional(),
+    watcherUids: z.array(z.string()).optional(),
+    priority: priority.optional(),
+    labels: z.array(z.string()).optional(),
+    fields: z.record(z.string(), z.unknown()).optional(),
+    startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+    dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  })
+  .strict();
+
+export const TransitionSchema = z.object({
+  transitionId: z.string().min(1, 'transitionId is required').trim(),
+});
+
+/**
+ * Replaces the full `dependsOn` set for an item. Kept as a dedicated endpoint
+ * rather than folded into UpdatePlannerItemSchema because setting it requires
+ * server-side invariants a plain field patch can't express: existence of the
+ * referenced items, no self-dependency, no cycles, and reciprocal maintenance
+ * of `blocks` on the other side of each edge (see setDependencies in data.ts).
+ */
+export const SetDependenciesSchema = z
+  .object({
+    dependsOn: z.array(z.string().min(1)).max(50, 'An item may depend on at most 50 others.'),
+  })
+  .strict();
+
+export const ApprovalDecisionSchema = z.object({
+  decision: z.enum(['approve', 'reject']),
+  comment: z.string().trim().max(5000).optional(),
+});
+
+export const FromTemplateSchema = z.object({
+  templateId: z.string().min(1, 'templateId is required').trim(),
+  spaceId: z.string().min(1, 'spaceId is required').trim(),
+  brandIds: z.array(z.string()).default([]),
+  titleOverride: z.string().trim().optional(),
+});
+
+/**
+ * Personal to-dos (My Workspace). Private per-user scratch items — NOT work
+ * items: no workflow, no assignees, no approvals. Scoped to the caller's uid
+ * server-side, so no uid field is accepted from the client.
+ */
+export const CreatePersonalTodoSchema = z
+  .object({
+    text: z.string().min(1, 'text is required').trim().max(500),
+    dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD').nullable().default(null),
+    list: z.enum(['todo', 'backlog', 'draft']).nullable().default('todo'),
+    taskId: z.string().nullable().default(null),
+  })
+  .strict();
+
+export const UpdatePersonalTodoSchema = z
+  .object({
+    text: z.string().trim().min(1).max(500).optional(),
+    done: z.boolean().optional(),
+    dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+    list: z.enum(['todo', 'backlog', 'draft']).nullable().optional(),
+    taskId: z.string().nullable().optional(),
+  })
+  .strict();
+
+export type CreatePlannerItem = z.infer<typeof CreatePlannerItemSchema>;
+export type UpdatePlannerItem = z.infer<typeof UpdatePlannerItemSchema>;

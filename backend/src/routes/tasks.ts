@@ -6,8 +6,56 @@ import { db } from '../services/firestore';
 import { sendPushToRoles } from '../services/pushService';
 import { checkPermission, isProjectMember } from '../middleware/rbac';
 import { firestore } from 'firebase-admin';
+import { upgradeLegacyTaskPatch } from '../lib/planner/absorb';
 
 const router = Router();
+
+export function syncLegacyMirrorFields(
+  patch: Record<string, any>,
+  nameToUid: Map<string, string>
+): Record<string, any> {
+  const sync: Record<string, any> = {};
+
+  if (patch.brand !== undefined) {
+    sync.brandIds = patch.brand ? [patch.brand] : [];
+  }
+
+  if (patch.assignedTo !== undefined) {
+    const assigneeUid = nameToUid.get(String(patch.assignedTo ?? '').toLowerCase().trim());
+    sync.assigneeUids = assigneeUid ? [assigneeUid] : [];
+  }
+
+  if (patch.dueDate !== undefined) {
+    sync.dueDate = patch.dueDate;
+  } else if (patch.draftDueDate !== undefined || patch.scheduledDate !== undefined) {
+    sync.dueDate = patch.draftDueDate || patch.scheduledDate || null;
+  }
+
+  return sync;
+}
+
+// ── nameToUid cache ──────────────────────────────────────────────────────────
+// Both POST / and PUT /:id previously scanned the ENTIRE users collection on
+// every request just to map display names → uids. The directory is small and
+// changes rarely; cache it for a few minutes.
+const NAME_TO_UID_TTL_MS = 5 * 60 * 1000;
+let nameToUidCache: { map: Map<string, string>; expiresAt: number } | null = null;
+
+async function getNameToUidMap(): Promise<Map<string, string>> {
+  if (nameToUidCache && nameToUidCache.expiresAt > Date.now()) return nameToUidCache.map;
+  const map = new Map<string, string>();
+  const usersSnap = await db.collection('users').get();
+  for (const doc of usersSnap.docs) {
+    const d = doc.data();
+    for (const key of [d.displayName, d.name, d.username]) {
+      if (typeof key === 'string' && key.trim()) {
+        map.set(key.toLowerCase().trim(), doc.id);
+      }
+    }
+  }
+  nameToUidCache = { map, expiresAt: Date.now() + NAME_TO_UID_TTL_MS };
+  return map;
+}
 
 // Cloud Scheduler auth helper
 function schedulerOrAdmin(req: AuthedRequest, res: Response, next: NextFunction) {
@@ -52,7 +100,7 @@ router.get('/check-deadlines', schedulerOrAdmin, async (req, res, next) => {
         const payload = {
           title: urgency,
           body: `${task.title} is due ${isToday ? 'today' : 'tomorrow'} (${dueDate}).`,
-          url: '/tasks',
+          url: '/planner/tasks',
           tag: `deadline-${doc.id}`,
         };
 
@@ -133,10 +181,12 @@ router.get('/', async (req: AuthedRequest, res: Response, next) => {
     let tasksList: any[] = [];
     let nextCursor: string | null = null;
 
-    // Filter permitted tasks in memory to apply condition-aware RBAC
-    for (const doc of tasksSnap.docs) {
-      nextCursor = doc.id;
-      const task = { ...doc.data(), id: doc.id };
+    const permPromises = tasksSnap.docs.map(async (doc: any) => {
+      const task = { ...doc.data(), id: doc.id } as any;
+
+      if (task.typeId && task.typeId !== 'task' && task.typeId !== 'meeting') {
+        return null;
+      }
 
       const hasPerm = await checkPermission(role, 'task', 'view', {
         userUid,
@@ -144,14 +194,23 @@ router.get('/', async (req: AuthedRequest, res: Response, next) => {
       });
 
       if (hasPerm) {
-        // Feature 2 Filter: filter by statusPhase if specified
         if (filterPhaseParam && task.statusPhase !== filterPhaseParam) {
-          continue;
+          return null;
         }
 
         stripInternalComments(task, role);
-        tasksList.push(task);
+        return task;
       }
+      return null;
+    });
+
+    const results = await Promise.all(permPromises);
+    for (const task of results) {
+      if (task) tasksList.push(task);
+    }
+
+    if (tasksSnap.docs.length > 0) {
+      nextCursor = tasksSnap.docs[tasksSnap.docs.length - 1].id;
     }
 
     if (tasksSnap.docs.length < limitAmount) {
@@ -258,7 +317,18 @@ router.post('/', validate(CreateTaskSchema), async (req: AuthedRequest, res: Res
       }
     }
 
-    const docRef = await db.collection('tasks').add(newTask);
+    // Resolve nameToUid map for assigneeUid mapping (cached, TTL 5 min)
+    const nameToUid = await getNameToUidMap();
+
+    // Call upgradeLegacyTaskPatch
+    const nowStr = new Date().toISOString();
+    const patch = upgradeLegacyTaskPatch(newTask, nowStr, nameToUid) || {};
+    const taskWithWorkItemFields = {
+      ...newTask,
+      ...patch,
+    };
+
+    const docRef = await db.collection('tasks').add(taskWithWorkItemFields);
     return res.json({ success: true, id: docRef.id });
   } catch (err: any) {
     next(err);
@@ -274,12 +344,24 @@ router.put('/:id', validate(UpdateTaskSchema), async (req: AuthedRequest, res: R
     const role = req.role || 'agency';
     const userUid = req.uid!;
 
+    // Defensively strip workflowId and typeId to prevent tampering
+    delete req.body.workflowId;
+    delete req.body.typeId;
+
     const taskDoc = await db.collection('tasks').doc(id).get();
     if (!taskDoc.exists) {
       return res.status(404).json({ success: false, error: 'Task not found' });
     }
 
     const task: any = { ...taskDoc.data(), id: taskDoc.id };
+
+    // Post-absorption, this collection is ALSO the planner work-item store.
+    // The engine's lockEditing post-function must not be bypassable through the
+    // legacy path — mirror routes/planner/items.ts (409 for everyone).
+    if (task.locked === true) {
+      return res.status(409).json({ success: false, error: 'Item is locked for editing by its workflow' });
+    }
+
     const patch = req.body;
 
     // Determine type of update
@@ -346,12 +428,47 @@ router.put('/:id', validate(UpdateTaskSchema), async (req: AuthedRequest, res: R
       };
     } else if (isChecklistUpdate) {
       writePatch = { checklist: patch.checklist };
+      if (typeof patch.progress === 'number') {
+        writePatch.progress = patch.progress;
+      }
     } else {
       // Non-privileged general edit was already rejected above; defensive default.
       return res.status(403).json({ success: false, error: 'Forbidden: cannot edit this task' });
     }
 
-    await db.collection('tasks').doc(id).update(writePatch);
+    // Resolve nameToUid map for assigneeUid mapping (cached, TTL 5 min)
+    const nameToUid = await getNameToUidMap();
+
+    const legacyMirror = syncLegacyMirrorFields(writePatch, nameToUid);
+    const finalPatch = {
+      ...writePatch,
+      ...legacyMirror,
+    };
+
+    await db.collection('tasks').doc(id).update(finalPatch);
+
+    // Status changes through this legacy path previously left NO trace in the
+    // per-item audit stream the planner engine maintains (spec §11) — append
+    // the same ActivityEntry shape the engine writes so the activity tab shows
+    // legacy moves too. Best-effort: the update above already committed.
+    if (isStatusUpdate) {
+      try {
+        await db.collection('tasks').doc(id).collection('activity').add({
+          ts: new Date().toISOString(),
+          actorUid: userUid,
+          kind: 'transition',
+          payload: {
+            transitionId: null,
+            transitionName: 'Legacy status change',
+            from: task.status ?? null,
+            to: patch.status,
+          },
+        });
+      } catch (auditErr) {
+        console.error(`Failed to append legacy status audit entry for task ${id}:`, auditErr);
+      }
+    }
+
     return res.json({ success: true });
   } catch (err: any) {
     next(err);

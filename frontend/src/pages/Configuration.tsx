@@ -32,12 +32,16 @@ export const Configuration: React.FC = () => {
   const [creatingUser, setCreatingUser] = useState(false);
   const [createMsg, setCreateMsg] = useState<{ ok: boolean; text: string } | null>(null);
   
-  // Custom brands and platforms config lists
+  // Custom brands, platforms and agencies config lists
   const [brands, setBrands] = useState<string[]>(['Sosun Fihaara', 'Sosun Cook', 'Sosun Book']);
   const [newBrand, setNewBrand] = useState('');
   
   const [platforms, setPlatforms] = useState<string[]>(['Instagram', 'TikTok', 'Facebook', 'WhatsApp Status']);
   const [newPlatform, setNewPlatform] = useState('');
+
+  const [agencies, setAgencies] = useState<string[]>(['Greyscale']);
+  const [newAgency, setNewAgency] = useState('');
+
   const [savingConfig, setSavingConfig] = useState(false);
   const [configMsg, setConfigMsg] = useState<string | null>(null);
 
@@ -94,6 +98,7 @@ export const Configuration: React.FC = () => {
       const c = await configApi.get();
       setBrands(c.brands);
       setPlatforms(c.platforms);
+      if (c.agencies) setAgencies(c.agencies);
     } catch (err) {
       console.error('Could not load brand/platform config:', err);
     }
@@ -232,7 +237,8 @@ export const Configuration: React.FC = () => {
         displayName: newUser.displayName.trim(),
         role: newUser.role,
       };
-      if (newUser.agencyName.trim()) body.agencyName = newUser.agencyName.trim();
+      const agencyNameVal = newUser.role === 'agency' ? (newUser.agencyName || agencies[0] || 'Greyscale') : '';
+      if (agencyNameVal) body.agencyName = agencyNameVal;
 
       const res = await fetch(`${backendUrl}/api/users/create`, {
         method: 'POST',
@@ -250,7 +256,7 @@ export const Configuration: React.FC = () => {
         uid: data.uid,
         displayName: newUser.displayName.trim(),
         role: newUser.role,
-        ...(newUser.agencyName.trim() ? { agencyName: newUser.agencyName.trim() } : {}),
+        ...(agencyNameVal ? { agencyName: agencyNameVal } : {}),
       }]);
 
       setCreateMsg({ ok: true, text: `Account created for ${newUser.displayName.trim()}. Share their password with them directly.` });
@@ -266,13 +272,14 @@ export const Configuration: React.FC = () => {
   // Persist brand/platform lists via the backend (Firestore + Google Sheet CONFIG tab).
   // Optimistic: the UI is updated by the caller; we reconcile with the server response
   // and revert on failure so a refresh never silently loses an unsaved change.
-  const saveConfig = async (patch: { brands?: string[]; platforms?: string[] }, revert: () => void) => {
+  const saveConfig = async (patch: { brands?: string[]; platforms?: string[]; agencies?: string[] }, revert: () => void) => {
     setSavingConfig(true);
     setConfigMsg(null);
     try {
       const r = await configApi.save(patch);
       setBrands(r.config.brands);
       setPlatforms(r.config.platforms);
+      if (r.config.agencies) setAgencies(r.config.agencies);
       if (r.sheetError) setConfigMsg(`Saved. (Google Sheet sync warning: ${r.sheetError})`);
     } catch (err) {
       revert();
@@ -312,6 +319,22 @@ export const Configuration: React.FC = () => {
     const next = platforms.filter(item => item !== p);
     setPlatforms(next);
     saveConfig({ platforms: next }, () => setPlatforms(prev));
+  };
+
+  const handleAddAgency = () => {
+    const a = newAgency.trim();
+    if (!a || agencies.includes(a)) return;
+    const prev = agencies;
+    setAgencies([...agencies, a]);
+    setNewAgency('');
+    saveConfig({ agencies: [...prev, a] }, () => setAgencies(prev));
+  };
+
+  const handleRemoveAgency = (a: string) => {
+    const prev = agencies;
+    const next = agencies.filter(item => item !== a);
+    setAgencies(next);
+    saveConfig({ agencies: next }, () => setAgencies(prev));
   };
 
   const handleSyncSheets = async () => {
@@ -501,7 +524,7 @@ export const Configuration: React.FC = () => {
         )}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginBottom: '24px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '24px', marginBottom: '24px' }}>
         {/* Brand Management */}
         <div className="section-card" style={{ marginBottom: '0' }}>
           <div className="section-header">
@@ -548,6 +571,31 @@ export const Configuration: React.FC = () => {
             <div style={{ display: 'flex', gap: '8px' }}>
               <input type="text" placeholder="Add new platform..." value={newPlatform} onChange={e => setNewPlatform(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAddPlatform(); } }} className="form-input" />
               <button className="btn btn-primary" onClick={handleAddPlatform} disabled={savingConfig} style={{ padding: '8px 16px' }}><Plus size={16} /></button>
+            </div>
+          )}
+        </div>
+
+        {/* Agency Management */}
+        <div className="section-card" style={{ marginBottom: '0' }}>
+          <div className="section-header">
+            <h3 className="section-title">Marketing Agencies</h3>
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '16px' }}>
+            {agencies.map(a => (
+              <span key={a} className="badge low" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '6px 12px' }}>
+                <span>{a}</span>
+                {isAdmin && (
+                  <button onClick={() => handleRemoveAgency(a)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+                    <X size={12} />
+                  </button>
+                )}
+              </span>
+            ))}
+          </div>
+          {isAdmin && (
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <input type="text" placeholder="Add new agency..." value={newAgency} onChange={e => setNewAgency(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAddAgency(); } }} className="form-input" />
+              <button className="btn btn-primary" onClick={handleAddAgency} disabled={savingConfig} style={{ padding: '8px 16px' }}><Plus size={16} /></button>
             </div>
           )}
         </div>
@@ -763,14 +811,17 @@ export const Configuration: React.FC = () => {
               </div>
               {newUser.role === 'agency' && (
                 <div style={{ gridColumn: '1 / -1' }}>
-                  <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Agency / Company Name (optional)</label>
-                  <input
-                    type="text"
-                    className="form-input"
-                    placeholder="e.g. Creative Studio Co."
-                    value={newUser.agencyName}
+                  <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Agency Name</label>
+                  <select
+                    className="form-select"
+                    value={newUser.agencyName || (agencies[0] || '')}
                     onChange={e => setNewUser(p => ({ ...p, agencyName: e.target.value }))}
-                  />
+                    style={{ width: '100%' }}
+                  >
+                    {agencies.map(a => (
+                      <option key={a} value={a}>{a}</option>
+                    ))}
+                  </select>
                 </div>
               )}
             </div>
@@ -872,14 +923,17 @@ export const Configuration: React.FC = () => {
                           />
                         </div>
                         <div>
-                          <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Agency / Company Name</label>
-                          <input
-                            type="text"
-                            className="form-input"
-                            value={editAgency}
+                          <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Agency Name</label>
+                          <select
+                            className="form-select"
+                            value={editAgency || (agencies[0] || '')}
                             onChange={e => setEditAgency(e.target.value)}
-                            placeholder="e.g. Sosun Agency Partner"
-                          />
+                            style={{ width: '100%' }}
+                          >
+                            {agencies.map(a => (
+                              <option key={a} value={a}>{a}</option>
+                            ))}
+                          </select>
                         </div>
                       </div>
                       <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>

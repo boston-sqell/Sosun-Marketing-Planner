@@ -38,10 +38,12 @@ export const BrandScopeProvider: React.FC<{ children: ReactNode }> = ({ children
 
   const isBudgetOrReports = location.pathname === '/budget' || location.pathname === '/reports';
 
+  const brandsParam = params.get('brands');
+
   const selected = useMemo(() => {
     if (!isBudgetOrReports) return [];
-    return params.get('brands')?.split(',').map(decodeURIComponent).filter(Boolean) ?? [];
-  }, [params, isBudgetOrReports]);
+    return brandsParam?.split(',').map(decodeURIComponent).filter(Boolean) ?? [];
+  }, [brandsParam, isBudgetOrReports]);
 
   // Only subscribe to Firestore once the user is authenticated — avoids
   // permission errors on the login page.

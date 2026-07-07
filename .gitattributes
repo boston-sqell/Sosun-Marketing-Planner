@@ -1,0 +1,31 @@
+# Normalize line endings: text files are stored LF in the repo. Without this,
+# the Windows ↔ Linux (sandbox mount) round-trip shows every file as modified
+# from pure CRLF churn (45 phantom-dirty files as of 2026-07-07).
+* text=auto
+
+# Definitely text
+*.ts text
+*.tsx text
+*.js text
+*.jsx text
+*.json text
+*.md text
+*.html text
+*.css text
+*.rules text
+*.yml text
+*.yaml text
+
+# Windows batch scripts need CRLF to run correctly
+*.bat text eol=crlf
+
+# Binary — never touch
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.pdf binary

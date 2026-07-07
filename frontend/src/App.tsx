@@ -1,4 +1,4 @@
-import React, { lazy, Suspense } from 'react';
+import React, { lazy, Suspense, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { BrandScopeProvider } from './context/BrandScopeContext';
@@ -26,6 +26,12 @@ const Retail = lazy(() => import('./pages/Retail').then(m => ({ default: m.Retai
 const Budget = lazy(() => import('./pages/Budget').then(m => ({ default: m.Budget })));
 const Reports = lazy(() => import('./pages/Reports').then(m => ({ default: m.Reports })));
 const NewsSentinel = lazy(() => import('./pages/NewsSentinel').then(m => ({ default: m.NewsSentinel })));
+const Planner = lazy(() => import('./pages/Planner').then(m => ({ default: m.Planner })));
+const PlannerBoard = lazy(() => import('./pages/PlannerBoard').then(m => ({ default: m.PlannerBoard })));
+const PlannerMyWork = lazy(() => import('./pages/PlannerMyWork').then(m => ({ default: m.PlannerMyWork })));
+const PlannerItem = lazy(() => import('./pages/PlannerItem').then(m => ({ default: m.PlannerItem })));
+const PlannerWorkload = lazy(() => import('./pages/PlannerWorkload').then(m => ({ default: m.PlannerWorkload })));
+const PlannerTimeline = lazy(() => import('./pages/PlannerTimeline').then(m => ({ default: m.PlannerTimeline })));
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -34,6 +40,9 @@ const AppContent: React.FC = () => {
   const location = useLocation();
   // Agency partners must never reach financial views (rules also deny the data server-side)
   const isAgency = profile?.role === 'agency';
+
+  // The absorption migration is complete. Default to true to prevent blocking rendering.
+  const [tasksAbsorbed] = useState<boolean>(true);
 
   if (loading) {
     return <LoadingSpinner message="Verifying credentials..." fullPage />;
@@ -82,6 +91,13 @@ const AppContent: React.FC = () => {
         return { title: 'Campaigns Planning', subtitle: 'Design and review marketing targets, channels and budgets.' };
       case '/tasks':
         return { title: 'Content Tasks & Queue', subtitle: 'Manage individual posts, checklist items and comments.' };
+      case '/planner':
+        return { title: 'My Workspace', subtitle: 'Your to-dos, assigned work and approvals — all in one place.' };
+      case '/planner/tasks':
+      case '/planner/board':
+        return tasksAbsorbed
+          ? { title: 'Content Tasks & Queue', subtitle: 'Manage individual posts, checklist items and comments.' }
+          : { title: 'Marketing Planner', subtitle: 'Workflow-driven work items — campaigns, approvals and beyond.' };
       case '/calendar':
         return { title: 'Marketing Calendar', subtitle: 'Visual content scheduling calendar (Month & List views).' };
       case '/media':
@@ -112,7 +128,7 @@ const AppContent: React.FC = () => {
   return (
     <div className="app-container">
       {/* Sidebar Navigation */}
-      <Sidebar />
+      <Sidebar tasksAbsorbed={tasksAbsorbed} />
 
       {/* Main Container */}
       <main className="main-content">
@@ -133,7 +149,23 @@ const AppContent: React.FC = () => {
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/dashboard" element={<Navigate to="/" replace />} />
                 <Route path="/campaigns" element={<Campaigns />} />
-                <Route path="/tasks" element={<Tasks />} />
+                <Route
+                  path="/tasks"
+                  element={tasksAbsorbed
+                    ? <Navigate to={`/planner/tasks${location.search}`} replace />
+                    : <Tasks />}
+                />
+                {/* /planner is the per-user workspace; the team-wide list moved to /planner/tasks.
+                    Old bookmarks (/planner/my-work, /planner/calendar, /planner/dashboard) redirect. */}
+                <Route path="/planner" element={<PlannerMyWork />} />
+                <Route path="/planner/tasks" element={<Planner />} />
+                <Route path="/planner/board" element={<PlannerBoard />} />
+                <Route path="/planner/my-work" element={<Navigate to="/planner" replace />} />
+                <Route path="/planner/workload" element={<PlannerWorkload />} />
+                <Route path="/planner/timeline" element={<PlannerTimeline />} />
+                <Route path="/planner/dashboard" element={<Navigate to="/" replace />} />
+                <Route path="/planner/calendar" element={<Navigate to="/calendar" replace />} />
+                <Route path="/planner/:id" element={<PlannerItem />} />
                 <Route path="/calendar" element={<CalendarView />} />
                 <Route path="/events" element={<Events />} />
                 <Route path="/retail" element={<Retail />} />
