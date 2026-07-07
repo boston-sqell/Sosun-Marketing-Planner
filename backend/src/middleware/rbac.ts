@@ -1,5 +1,3 @@
-import { Response, NextFunction } from 'express';
-import { AuthedRequest } from './auth';
 import { db } from '../services/firestore';
 
 export interface PermissionRule {
@@ -152,33 +150,8 @@ export async function checkPermission(
   }
 }
 
-/**
- * Express middleware to enforce RBAC on generic endpoints.
- */
-export function requirePermission(
-  resource: 'task' | 'checklist' | 'comment' | 'campaign',
-  action: 'view' | 'create' | 'edit' | 'delete' | 'status_transition' | 'check'
-) {
-  return async (req: AuthedRequest, res: Response, next: NextFunction) => {
-    try {
-      const role = req.role || 'agency';
-      const userUid = req.uid;
-      if (!userUid) {
-        return res.status(401).json({ success: false, error: 'Unauthorized' });
-      }
-
-      const hasPerm = await checkPermission(role, resource, action, {
-        userUid,
-        resourceData: req.body,
-      });
-
-      if (!hasPerm) {
-        return res.status(403).json({ success: false, error: 'Forbidden: insufficient permissions' });
-      }
-
-      next();
-    } catch (err: any) {
-      next(err);
-    }
-  };
-}
+// NOTE: a generic `requirePermission` Express middleware used to live here. It
+// was unused and evaluated RBAC conditions against `req.body` (attacker-
+// controlled data) instead of the actual Firestore document — deleted rather
+// than left around for someone to wire up. Routes must call checkPermission()
+// with the REAL resource data, as routes/tasks.ts and routes/campaigns.ts do.

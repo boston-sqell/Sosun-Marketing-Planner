@@ -35,16 +35,28 @@ const dayKey = (d: Date) =>
  */
 export function useCalendarItems(windowStart: Date, windowEnd: Date) {
   const { anyInScope } = useBrandScope();
-  const { profile } = useAuth();
-  const role = profile?.role || 'internal';
+  // Authoritative claim-based role from AuthContext — NOT profile?.role with an
+  // 'internal' fallback. The old fallback ran the staff onSnapshot path for
+  // agency users whose profile hadn't resolved at mount; the rules denied the
+  // reads, the listeners had no error callbacks, and (with an effect that never
+  // re-ran) the calendar stayed in `loading` forever.
+  const { role: authRole, loading: authLoading } = useAuth();
+  const role = authRole || 'internal';
   const [tasks, setTasks] = useState<TaskData[]>([]);
   const [campaigns, setCampaigns] = useState<CampaignData[]>([]);
   const [events, setEvents] = useState<EventData[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Don't subscribe until auth has resolved — we'd pick the wrong data path.
+    if (authLoading) return;
+
     let pending = 3;
     const done = () => { if (--pending <= 0) setLoading(false); };
+    const onErr = (label: string) => (err: unknown) => {
+      console.error(`Calendar ${label} listener failed:`, err);
+      done(); // always resolve loading, even on permission errors
+    };
 
     let unsubs: Array<() => void> = [];
 
@@ -70,7 +82,7 @@ export function useCalendarItems(windowStart: Date, windowEnd: Date) {
       const unsubEvents = onSnapshot(collection(db, 'events'), snap => {
         setEvents(snap.docs.map(d => ({ id: d.id, ...d.data() } as EventData)));
         done();
-      });
+      }, onErr('events'));
       unsubs.push(unsubEvents);
     } else {
       // Internal & admin roles can use standard onSnapshot
@@ -78,27 +90,29 @@ export function useCalendarItems(windowStart: Date, windowEnd: Date) {
         onSnapshot(collection(db, 'tasks'), snap => {
           setTasks(snap.docs.map(d => ({ id: d.id, ...d.data() } as TaskData)));
           done();
-        }),
+        }, onErr('tasks')),
         onSnapshot(collection(db, 'campaigns'), snap => {
           setCampaigns(snap.docs.map(d => ({ id: d.id, ...d.data() } as CampaignData)));
           done();
-        }),
+        }, onErr('campaigns')),
         onSnapshot(collection(db, 'events'), snap => {
           setEvents(snap.docs.map(d => ({ id: d.id, ...d.data() } as EventData)));
           done();
-        }),
+        }, onErr('events')),
       ];
     }
     return () => unsubs.forEach(u => u());
-  }, []);
+  }, [role, authLoading]);
 
   const items = useMemo<CalendarItem[]>(() => {
     const out: CalendarItem[] = [];
 
     for (const t of tasks) {
       const isMeeting = t.type === 'meeting';
-      const day = isMeeting 
-        ? (t.startDate ? new Date(t.startDate) : null) 
+      // parseDate treats YYYY-MM-DD as a LOCAL calendar day; `new Date(str)`
+      // parses it as UTC midnight, which shifts the day west of Greenwich.
+      const day = isMeeting
+        ? parseDate(t.startDate)
         : parseDate(t.scheduledDate);
 
       if (!day || day < windowStart || day > windowEnd) continue;
@@ -113,7 +127,7 @@ export function useCalendarItems(windowStart: Date, windowEnd: Date) {
         }
 
         const start = day;
-        const end = t.endDate ? new Date(t.endDate) : start;
+        const end = parseDate(t.endDate) || start;
 
         out.push({
           id: t.id, kind: 'meeting', title: `[Meeting] ${t.title}`, brands: [t.brand],

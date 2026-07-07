@@ -112,11 +112,12 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // Global Activities Collection — append-only audit log. Any authed user may
-    // add an entry; nobody may edit or delete one from the client (prevents
-    // tampering). Backend (Admin SDK) bypasses these rules for housekeeping.
-    // NOTE (absorption §1.3): create tightens to `false` at frontend cutover,
-    // once utils/activityLogger.ts writes via the API instead of the client.
+    // Global Activities Collection — append-only audit log. Client writes are
+    // fully blocked (DoW hardening, CODE_AUDIT_2026-07-04 §S1). The ONLY write
+    // path is POST /api/activities (routes/activities.ts, Admin SDK), which
+    // derives user/role from the verified token and Zod-validates the payload.
+    // utils/activityLogger.ts was rewired to that endpoint 2026-07-07 — deploy
+    // backend + hosting together with (or before) these rules.
     match /activities/{activityId} {
       allow read: if isAuth();
       allow create: if false;

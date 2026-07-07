@@ -34,6 +34,29 @@ export function syncLegacyMirrorFields(
   return sync;
 }
 
+// ── nameToUid cache ──────────────────────────────────────────────────────────
+// Both POST / and PUT /:id previously scanned the ENTIRE users collection on
+// every request just to map display names → uids. The directory is small and
+// changes rarely; cache it for a few minutes.
+const NAME_TO_UID_TTL_MS = 5 * 60 * 1000;
+let nameToUidCache: { map: Map<string, string>; expiresAt: number } | null = null;
+
+async function getNameToUidMap(): Promise<Map<string, string>> {
+  if (nameToUidCache && nameToUidCache.expiresAt > Date.now()) return nameToUidCache.map;
+  const map = new Map<string, string>();
+  const usersSnap = await db.collection('users').get();
+  for (const doc of usersSnap.docs) {
+    const d = doc.data();
+    for (const key of [d.displayName, d.name, d.username]) {
+      if (typeof key === 'string' && key.trim()) {
+        map.set(key.toLowerCase().trim(), doc.id);
+      }
+    }
+  }
+  nameToUidCache = { map, expiresAt: Date.now() + NAME_TO_UID_TTL_MS };
+  return map;
+}
+
 // Cloud Scheduler auth helper
 function schedulerOrAdmin(req: AuthedRequest, res: Response, next: NextFunction) {
   const key = process.env.SCHEDULER_KEY;
@@ -294,17 +317,8 @@ router.post('/', validate(CreateTaskSchema), async (req: AuthedRequest, res: Res
       }
     }
 
-    // Resolve nameToUid map for assigneeUid mapping
-    const nameToUid = new Map<string, string>();
-    const usersSnap = await db.collection('users').get();
-    for (const doc of usersSnap.docs) {
-      const d = doc.data();
-      for (const key of [d.displayName, d.name, d.username]) {
-        if (typeof key === 'string' && key.trim()) {
-          nameToUid.set(key.toLowerCase().trim(), doc.id);
-        }
-      }
-    }
+    // Resolve nameToUid map for assigneeUid mapping (cached, TTL 5 min)
+    const nameToUid = await getNameToUidMap();
 
     // Call upgradeLegacyTaskPatch
     const nowStr = new Date().toISOString();
@@ -340,6 +354,14 @@ router.put('/:id', validate(UpdateTaskSchema), async (req: AuthedRequest, res: R
     }
 
     const task: any = { ...taskDoc.data(), id: taskDoc.id };
+
+    // Post-absorption, this collection is ALSO the planner work-item store.
+    // The engine's lockEditing post-function must not be bypassable through the
+    // legacy path — mirror routes/planner/items.ts (409 for everyone).
+    if (task.locked === true) {
+      return res.status(409).json({ success: false, error: 'Item is locked for editing by its workflow' });
+    }
+
     const patch = req.body;
 
     // Determine type of update
@@ -414,17 +436,8 @@ router.put('/:id', validate(UpdateTaskSchema), async (req: AuthedRequest, res: R
       return res.status(403).json({ success: false, error: 'Forbidden: cannot edit this task' });
     }
 
-    // Resolve nameToUid map for assigneeUid mapping
-    const nameToUid = new Map<string, string>();
-    const usersSnap = await db.collection('users').get();
-    for (const doc of usersSnap.docs) {
-      const d = doc.data();
-      for (const key of [d.displayName, d.name, d.username]) {
-        if (typeof key === 'string' && key.trim()) {
-          nameToUid.set(key.toLowerCase().trim(), doc.id);
-        }
-      }
-    }
+    // Resolve nameToUid map for assigneeUid mapping (cached, TTL 5 min)
+    const nameToUid = await getNameToUidMap();
 
     const legacyMirror = syncLegacyMirrorFields(writePatch, nameToUid);
     const finalPatch = {
@@ -433,6 +446,29 @@ router.put('/:id', validate(UpdateTaskSchema), async (req: AuthedRequest, res: R
     };
 
     await db.collection('tasks').doc(id).update(finalPatch);
+
+    // Status changes through this legacy path previously left NO trace in the
+    // per-item audit stream the planner engine maintains (spec §11) — append
+    // the same ActivityEntry shape the engine writes so the activity tab shows
+    // legacy moves too. Best-effort: the update above already committed.
+    if (isStatusUpdate) {
+      try {
+        await db.collection('tasks').doc(id).collection('activity').add({
+          ts: new Date().toISOString(),
+          actorUid: userUid,
+          kind: 'transition',
+          payload: {
+            transitionId: null,
+            transitionName: 'Legacy status change',
+            from: task.status ?? null,
+            to: patch.status,
+          },
+        });
+      } catch (auditErr) {
+        console.error(`Failed to append legacy status audit entry for task ${id}:`, auditErr);
+      }
+    }
+
     return res.json({ success: true });
   } catch (err: any) {
     next(err);

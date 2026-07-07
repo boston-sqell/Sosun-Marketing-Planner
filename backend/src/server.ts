@@ -20,6 +20,7 @@ import plannerCronRouter from './routes/planner/cron';
 import plannerViewsRouter from './routes/planner/views';
 import plannerAgentRouter from './routes/planner/agent';
 import plannerTodosRouter from './routes/planner/todos';
+import activitiesRouter from './routes/activities';
 
 dotenv.config();
 
@@ -146,6 +147,7 @@ app.use('/api/planner/cron', plannerCronRouter);
 app.use('/api/planner/views', plannerViewsRouter);
 app.use('/api/planner/agent', plannerAgentRouter);
 app.use('/api/planner/todos', plannerTodosRouter);
+app.use('/api/activities', activitiesRouter);
 
 // Basic health check route
 app.get('/health', (req, res) => {

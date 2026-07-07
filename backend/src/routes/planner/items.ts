@@ -78,6 +78,35 @@ function stripInternalComments(item: any, role: AppRole) {
   return item;
 }
 
+/** Financial fields agency roles must never see (mirrors routes/campaigns.ts). */
+const AGENCY_HIDDEN_FINANCIAL_FIELDS = [
+  'budget',
+  'budgetPlanned',
+  'budgetSpent',
+  'financial_summary',
+  'performance_metrics',
+] as const;
+
+/**
+ * Strip campaign financials for agency roles. listItems() already does this on
+ * the list path; the detail / my-work paths previously returned them raw —
+ * an agency user could read any campaign's budget by fetching it by id.
+ * Applied on EVERY egress path as the single source of truth.
+ */
+function stripAgencyFinancials(item: any, role: AppRole | undefined) {
+  if ((role === 'agency' || role === 'external_agency') && item?.typeId === 'campaign' && item.fields) {
+    for (const f of AGENCY_HIDDEN_FINANCIAL_FIELDS) delete item.fields[f];
+  }
+  return item;
+}
+
+/** Both agency redactions, in one call. */
+function redactForRole(item: any, role: AppRole | undefined) {
+  stripInternalComments(item, role || 'agency');
+  stripAgencyFinancials(item, role);
+  return item;
+}
+
 /**
  * Build the engine actor from the request. Workflow `role` conditions match
  * against BOTH the identity claim (admin/internal/agency…) and the resolved
@@ -106,8 +135,9 @@ router.get('/', async (req: AuthedRequest, res: Response, next) => {
       forAgency: req.role === 'agency' || req.role === 'external_agency',
     };
     const { items, nextCursor } = await listItems(filter, cursor);
-    // Agency users must never see internal-only commentary (mirrors routes/tasks.ts).
-    for (const it of items) stripInternalComments(it, req.role || 'agency');
+    // Agency users must never see internal-only commentary (mirrors routes/tasks.ts)
+    // nor campaign financials (belt-and-braces on top of listItems' own strip).
+    for (const it of items) redactForRole(it, req.role);
     return res.json({ success: true, items, nextCursor });
   } catch (err) {
     next(err);
@@ -120,9 +150,10 @@ router.get('/', async (req: AuthedRequest, res: Response, next) => {
 router.get('/my-work', async (req: PlannerRequest, res: Response, next) => {
   try {
     const { assigned, awaitingApproval } = await getMyWork(req.uid!, actorFrom(req).roles);
-    // Strip internal-only comments for agency users on both result buckets.
-    for (const it of assigned) stripInternalComments(it, req.role || 'agency');
-    for (const it of awaitingApproval) stripInternalComments(it, req.role || 'agency');
+    // Redact internal-only comments AND campaign financials for agency users
+    // on both result buckets.
+    for (const it of assigned) redactForRole(it, req.role);
+    for (const it of awaitingApproval) redactForRole(it, req.role);
     return res.json({ success: true, assigned, awaitingApproval });
   } catch (err) {
     next(err);
@@ -170,7 +201,7 @@ router.get('/:id', async (req: AuthedRequest, res: Response, next) => {
       const ok = isAgency(req.role) ? agencyCanAccess(item, req.uid!) : (item.assigneeUids ?? []).includes(req.uid!);
       if (!ok) return res.status(403).json({ success: false, error: 'Forbidden' });
     }
-    stripInternalComments(item, req.role || 'agency');
+    redactForRole(item, req.role);
     return res.json({ success: true, item });
   } catch (err) {
     next(err);
